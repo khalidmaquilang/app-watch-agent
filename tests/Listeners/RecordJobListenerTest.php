@@ -30,7 +30,7 @@ it('records a processed sync job with its class, queue, connection and attempt',
     TracedJob::dispatch();
 
     $trace_id = TracedJob::$trace_ids[0];
-    $events = $this->recorder->flush((string) $trace_id);
+    $events = recordedEvents((string) $trace_id);
 
     expect($trace_id)->not->toBeNull()
         ->and($events)->toHaveCount(1)
@@ -55,7 +55,7 @@ it('records the queue and attempt of a job run by a worker', function (): void {
     event(new JobProcessed('redis', $job));
     event(new JobAttempted('redis', $job));
 
-    expect($this->recorder->flush((string) $trace_id)[0]->toArray())->toMatchArray([
+    expect(recordedEvents((string) $trace_id)[0]->toArray())->toMatchArray([
         'job_class' => TracedJob::class,
         'queue' => 'emails',
         'connection' => 'redis',
@@ -67,7 +67,7 @@ it('records the queue and attempt of a job run by a worker', function (): void {
 it('records a failed job and still throws its exception', function (): void {
     expect(fn () => TracedJob::dispatch(should_throw: true))->toThrow(RuntimeException::class, 'Job failed on purpose.');
 
-    $events = $this->recorder->flush((string) TracedJob::$trace_ids[0]);
+    $events = recordedEvents((string) TracedJob::$trace_ids[0]);
 
     expect($events)->toHaveCount(1)
         ->and($events[0]->toArray())->toMatchArray(['job_class' => TracedJob::class, 'status' => 'failed', 'attempt' => 1]);
@@ -82,7 +82,7 @@ it('records a job released after an exception once, under its own trace', functi
     event(new JobFailed('redis', $job, new RuntimeException('Boom')));
     event(new JobAttempted('redis', $job, new RuntimeException('Boom')));
 
-    $events = $this->recorder->flush((string) $trace_id);
+    $events = recordedEvents((string) $trace_id);
 
     expect($events)->toHaveCount(1)
         ->and($events[0]->toArray())->toMatchArray([
@@ -113,7 +113,7 @@ it('records nothing for an ignored job class, including events inside its trace'
     IgnoredJob::dispatch();
 
     expect(TracedJob::$trace_ids[0])->not->toBeNull()
-        ->and($this->recorder->flush((string) TracedJob::$trace_ids[0]))->toBe([]);
+        ->and(recordedEvents((string) TracedJob::$trace_ids[0]))->toBe([]);
 })->with([
     'class name' => [IgnoredJob::class],
     'glob' => ['AppWatch\\Agent\\Tests\\Fixtures\\Jobs\\Ignored*'],
@@ -124,7 +124,7 @@ it('records nothing when the job trace is not sampled', function (): void {
 
     TracedJob::dispatch();
 
-    expect($this->recorder->flush((string) TracedJob::$trace_ids[0]))->toBe([]);
+    expect(recordedEvents((string) TracedJob::$trace_ids[0]))->toBe([]);
 });
 
 it('records nothing without a token', function (): void {
@@ -140,8 +140,8 @@ it('gives every job run its own trace and ends it afterwards', function (): void
     TracedJob::dispatch();
 
     [$first_trace_id, $second_trace_id] = TracedJob::$trace_ids;
-    $first_events = $this->recorder->flush((string) $first_trace_id);
-    $second_events = $this->recorder->flush((string) $second_trace_id);
+    $first_events = recordedEvents((string) $first_trace_id);
+    $second_events = recordedEvents((string) $second_trace_id);
 
     expect($first_trace_id)->not->toBe($second_trace_id)
         ->and($first_events)->toHaveCount(1)
@@ -158,5 +158,5 @@ it('restores the trace a job was dispatched inside', function (): void {
 
     expect(TracedJob::$trace_ids[0])->not->toBe($parent_trace_id)
         ->and($this->trace_context->traceId())->toBe($parent_trace_id)
-        ->and($this->recorder->flush((string) $parent_trace_id))->toBe([]);
+        ->and(recordedEvents((string) $parent_trace_id))->toBe([]);
 });

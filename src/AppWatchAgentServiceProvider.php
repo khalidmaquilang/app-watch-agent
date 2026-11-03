@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AppWatch\Agent;
 
 use AppWatch\Agent\Http\Middleware\StartRequestTraceMiddleware;
+use AppWatch\Agent\Listeners\FlushTraceListener;
 use AppWatch\Agent\Listeners\RecordCacheListener;
 use AppWatch\Agent\Listeners\RecordExceptionListener;
 use AppWatch\Agent\Listeners\RecordJobListener;
@@ -18,13 +19,18 @@ use AppWatch\Agent\Support\LogContextSanitizer;
 use AppWatch\Agent\Support\Sampler;
 use AppWatch\Agent\Support\SqlNormalizer;
 use AppWatch\Agent\Support\TraceContext;
+use AppWatch\Agent\Transport\DaemonTransport;
+use AppWatch\Agent\Transport\NullTransport;
+use AppWatch\Agent\Transport\Transport;
 use Illuminate\Cache\Events\CacheHit;
 use Illuminate\Cache\Events\CacheMissed;
 use Illuminate\Cache\Events\KeyForgotten;
 use Illuminate\Cache\Events\KeyWritten;
+use Illuminate\Console\Events\CommandFinished;
 use Illuminate\Console\Events\CommandStarting;
 use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Contracts\Events\Dispatcher;
+use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Contracts\Http\Kernel as HttpKernelContract;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Exceptions\Handler;
@@ -62,6 +68,13 @@ class AppWatchAgentServiceProvider extends ServiceProvider
         $this->app->singleton(RecordCacheListener::class);
         $this->app->singleton(RecordLogListener::class);
         $this->app->singleton(RecordExceptionListener::class);
+        $this->app->singleton(DaemonTransport::class);
+        $this->app->singleton(
+            Transport::class,
+            static fn (Application $app): Transport => $app->make(Recorder::class)->isEnabled()
+                ? $app->make(DaemonTransport::class)
+                : new NullTransport,
+        );
     }
 
     /**
@@ -82,7 +95,8 @@ class AppWatchAgentServiceProvider extends ServiceProvider
 
     /**
      * Start traces for requests, jobs and commands, and record request, job, query, outgoing
-     * request, cache, log and exception events.
+     * request, cache, log and exception events, and flush each trace's events to the transport
+     * when the request, job run or command ends.
      */
     protected function registerTracing(): void
     {
@@ -107,6 +121,10 @@ class AppWatchAgentServiceProvider extends ServiceProvider
         $events->listen(JobProcessed::class, [RecordJobListener::class, 'handleJobProcessed']);
         $events->listen(JobFailed::class, [RecordJobListener::class, 'handleJobFailed']);
         $events->listen(JobReleasedAfterException::class, [RecordJobListener::class, 'handleJobReleasedAfterException']);
+        // Flush the run's trace once its job event is recorded, and again (before the trace ends)
+        // for anything recorded after that, e.g. by JobFailed listeners.
+        $events->listen([JobProcessed::class, JobFailed::class, JobReleasedAfterException::class], FlushTraceListener::class);
+        $events->listen(JobAttempted::class, FlushTraceListener::class);
         $events->listen(JobAttempted::class, [RecordJobListener::class, 'handleJobAttempted']);
         $events->listen(QueryExecuted::class, RecordQueryListener::class);
         $events->listen(RequestSending::class, [RecordOutgoingRequestListener::class, 'handleRequestSending']);
@@ -114,6 +132,11 @@ class AppWatchAgentServiceProvider extends ServiceProvider
         $events->listen(ConnectionFailed::class, [RecordOutgoingRequestListener::class, 'handleConnectionFailed']);
         $events->listen([CacheHit::class, CacheMissed::class, KeyWritten::class, KeyForgotten::class], RecordCacheListener::class);
         $events->listen(MessageLogged::class, RecordLogListener::class);
+        $events->listen(CommandFinished::class, FlushTraceListener::class);
+
+        $this->app->terminating(function (): void {
+            $this->app->make(FlushTraceListener::class)->handle();
+        });
 
         $register_reportable = function (mixed $handler): void {
             if ($handler instanceof Handler) {

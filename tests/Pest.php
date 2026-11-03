@@ -5,14 +5,82 @@ declare(strict_types=1);
 use AppWatch\Agent\Enums\JobStatusEnum;
 use AppWatch\Agent\Enums\LogLevelEnum;
 use AppWatch\Agent\Payloads\EventMetadata;
+use AppWatch\Agent\Payloads\EventPayload;
 use AppWatch\Agent\Payloads\ExceptionEventPayload;
 use AppWatch\Agent\Payloads\JobEventPayload;
 use AppWatch\Agent\Payloads\LogEventPayload;
 use AppWatch\Agent\Payloads\QueryEventPayload;
 use AppWatch\Agent\Payloads\RequestEventPayload;
+use AppWatch\Agent\Recorder;
 use AppWatch\Agent\Tests\TestCase;
+use AppWatch\Agent\Transport\FakeTransport;
+use AppWatch\Agent\Transport\Transport;
 
 pest()->extend(TestCase::class)->in(__DIR__);
+
+/**
+ * Every event of the trace: those already flushed to the fake transport (when its request, job
+ * run or command ended), then those still buffered in the recorder (which are flushed now).
+ *
+ * @return array<int, EventPayload>
+ */
+function recordedEvents(string $trace_id): array
+{
+    $transport = app(Transport::class);
+    $sent = $transport instanceof FakeTransport ? $transport->events($trace_id) : [];
+
+    return [...$sent, ...app(Recorder::class)->flush($trace_id)];
+}
+
+/**
+ * A local TCP server on an ephemeral port standing in for the agent daemon, with its port.
+ *
+ * @return array{0: resource, 1: int}
+ */
+function startTestDaemon(): array
+{
+    $server = stream_socket_server('tcp://127.0.0.1:0', $error_code, $error_message);
+
+    if (! is_resource($server)) {
+        throw new RuntimeException("Could not start the test daemon: {$error_message}");
+    }
+
+    $port = (int) substr((string) strrchr((string) stream_socket_get_name($server, false), ':'), 1);
+
+    return [$server, $port];
+}
+
+/**
+ * A port nothing listens on (a test server's port, freed again).
+ */
+function unusedPort(): int
+{
+    [$server, $port] = startTestDaemon();
+    fclose($server);
+
+    return $port;
+}
+
+/**
+ * Accept every connection already made to the test daemon and decode the NDJSON lines it got,
+ * one array per connection. The client has already written and closed, so this never blocks
+ * for long.
+ *
+ * @param  resource  $server
+ * @return array<int, array<int, array<string, mixed>>>
+ */
+function readTestDaemon($server): array
+{
+    $connections = [];
+
+    while (($connection = @stream_socket_accept($server, 0.1)) !== false) {
+        $lines = array_filter(explode("\n", (string) stream_get_contents($connection)), fn (string $line): bool => $line !== '');
+        $connections[] = array_values(array_map(fn (string $line): array => json_decode($line, true, flags: JSON_THROW_ON_ERROR), $lines));
+        fclose($connection);
+    }
+
+    return $connections;
+}
 
 /**
  * The event of the given type from the copied v1 contract fixture (tests/Fixtures/ingest-batch-v1.json).

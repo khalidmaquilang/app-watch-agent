@@ -33,7 +33,7 @@ beforeEach(function (): void {
 function flushedRequestEvents(?string $trace_id): array
 {
     $events = array_filter(
-        app(Recorder::class)->flush((string) $trace_id),
+        recordedEvents((string) $trace_id),
         fn (EventPayload $event): bool => $event instanceof RequestEventPayload,
     );
 
@@ -104,7 +104,7 @@ it('records nothing for an ignored path, including events inside its trace', fun
     $this->recorder->record(queryEvent($trace_id));
 
     expect($this->trace_context->isSampled())->toBeFalse()
-        ->and($this->recorder->flush($trace_id))->toBe([]);
+        ->and(recordedEvents($trace_id))->toBe([]);
 });
 
 it('records nothing when the request trace is not sampled', function (): void {
@@ -152,8 +152,8 @@ it('keeps the request trace after a job dispatched synchronously inside it', fun
 
     $request_trace_id = $this->trace_context->traceId();
     $job_trace_id = TracedJob::$trace_ids[0];
-    $request_events = $this->recorder->flush((string) $request_trace_id);
-    $job_events = $this->recorder->flush((string) $job_trace_id);
+    $request_events = recordedEvents((string) $request_trace_id);
+    $job_events = recordedEvents((string) $job_trace_id);
 
     expect($job_trace_id)->not->toBeNull()->not->toBe($request_trace_id)
         ->and(array_map(fn (EventPayload $event): TelemetryTypeEnum => $event->type(), $request_events))->toBe([TelemetryTypeEnum::Request])
