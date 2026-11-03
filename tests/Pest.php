@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use AppWatch\Agent\Daemon\Spool;
 use AppWatch\Agent\Enums\JobStatusEnum;
 use AppWatch\Agent\Enums\LogLevelEnum;
 use AppWatch\Agent\Payloads\EventMetadata;
@@ -221,4 +222,22 @@ function configureMonitor(): void
         'app-watch.token' => 'aw_test_token',
         'app-watch.monitor_url' => 'https://monitor.test',
     ]);
+}
+
+/**
+ * The events of every spooled batch, one array per spool file, oldest first.
+ *
+ * @return array<int, array<int, array<string, mixed>>>
+ */
+function spooledBatches(): array
+{
+    return array_map(static function (string $path): array {
+        $json = gzdecode((string) file_get_contents($path));
+
+        if ($json === false) {
+            throw new RuntimeException("The spool file {$path} is not gzip.");
+        }
+
+        return json_decode($json, true, flags: JSON_THROW_ON_ERROR);
+    }, app(Spool::class)->files());
 }

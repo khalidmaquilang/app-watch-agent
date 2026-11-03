@@ -40,8 +40,10 @@ return [
     | Where the app sends recorded events (newline-delimited JSON over TCP) and
     | where `php artisan app-watch:agent` listens. The daemon posts a batch once
     | `flush_events` events are buffered or the oldest has waited
-    | `flush_seconds`, and keeps at most `max_buffered_events` in memory while
-    | the monitor is unreachable (the oldest are dropped past that).
+    | `flush_seconds`. Batches that still fail after three attempts, or that
+    | would push past `max_buffered_events` in memory, are written as gzip files
+    | to `spool_path` (at most `spool_max_bytes`, the oldest deleted first) and
+    | replayed oldest first once the monitor accepts deliveries again.
     |
     */
 
@@ -51,6 +53,8 @@ return [
         'flush_events' => (int) env('APP_WATCH_DAEMON_FLUSH_EVENTS', 500),
         'flush_seconds' => (int) env('APP_WATCH_DAEMON_FLUSH_SECONDS', 5),
         'max_buffered_events' => (int) env('APP_WATCH_DAEMON_MAX_BUFFERED_EVENTS', 10000),
+        'spool_path' => env('APP_WATCH_DAEMON_SPOOL_PATH', storage_path('app/app-watch/spool')),
+        'spool_max_bytes' => (int) env('APP_WATCH_DAEMON_SPOOL_MAX_BYTES', 100 * 1024 * 1024),
     ],
 
     /*

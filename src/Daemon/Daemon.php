@@ -116,6 +116,37 @@ final class Daemon
     }
 
     /**
+     * Stop gracefully (on SIGTERM/SIGINT): stop accepting connections, take in whatever the open
+     * connections already sent, and give every buffered event one final, short delivery attempt;
+     * the Outbox spools what that attempt could not deliver. Returns the attempt's result, or null
+     * when nothing was buffered.
+     */
+    public function shutdown(): ?IngestResult
+    {
+        if (is_resource($this->server)) {
+            fclose($this->server);
+        }
+
+        $this->server = null;
+
+        foreach (array_keys($this->connections) as $connection_id) {
+            $this->read($connection_id);
+
+            $line_buffer = $this->line_buffers[$connection_id] ?? null;
+
+            if ($line_buffer !== null) {
+                $this->buffer($line_buffer->finish());
+            }
+
+            $this->closeConnection($connection_id);
+        }
+
+        $this->outbox->push($this->batcher->flush());
+
+        return $this->outbox->flushForShutdown();
+    }
+
+    /**
      * Close every connection and the listening socket. Events still buffered stay in memory.
      */
     public function close(): void

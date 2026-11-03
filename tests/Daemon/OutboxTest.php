@@ -128,15 +128,63 @@ it('keeps events pushed while backing off and sends them with the retried ones',
     expect(ingestBatch(Http::recorded()[1][0])['events'])->toBe([...$first, ...$second]);
 });
 
-it('drops and counts the oldest events past the memory cap', function (): void {
+it('spools every pending event instead of holding more than the memory cap', function (): void {
     config(['app-watch.daemon.max_buffered_events' => 5]);
     $events = daemonEvents(7);
 
     $this->outbox->push(array_slice($events, 0, 4));
+
+    expect($this->outbox->pending())->toBe(array_slice($events, 0, 4));
+
     $this->outbox->push(array_slice($events, 4));
 
-    expect($this->outbox->pending())->toBe(array_slice($events, 2))
-        ->and($this->outbox->droppedCount())->toBe(2);
+    expect($this->outbox->pending())->toBe([])
+        ->and(spooledBatches())->toBe([$events])
+        ->and($this->outbox->spooledCount())->toBe(7)
+        ->and($this->outbox->droppedCount())->toBe(0);
+});
+
+it('spools the pending events after three failed deliveries in a row', function (): void {
+    $attempts = 0;
+    Http::fake(function () use (&$attempts): never {
+        $attempts++;
+
+        throw new ConnectionException('Connection refused');
+    });
+    $events = daemonEvents(3);
+    $this->outbox->push($events);
+
+    $this->outbox->deliver();
+    CarbonImmutable::setTestNow($this->outbox->nextAttemptAt());
+    $this->outbox->deliver();
+
+    expect($this->outbox->pending())->toBe($events)
+        ->and(spooledBatches())->toBe([]);
+
+    CarbonImmutable::setTestNow($this->outbox->nextAttemptAt());
+    $this->outbox->deliver();
+
+    expect($this->outbox->pending())->toBe([])
+        ->and(spooledBatches())->toBe([$events])
+        ->and($this->outbox->isBackingOff())->toBeTrue()
+        ->and($attempts)->toBe(3);
+});
+
+it('drops and counts the events the spool cannot take', function (): void {
+    $file = $this->spool_path.'-file';
+    file_put_contents($file, 'not a directory');
+    config(['app-watch.daemon.max_buffered_events' => 2, 'app-watch.daemon.spool_path' => $file.'/spool']);
+
+    try {
+        $this->outbox->push(daemonEvents(3));
+
+        expect($this->outbox->pending())->toBe([])
+            ->and($this->outbox->droppedCount())->toBe(3)
+            ->and($this->outbox->spooledCount())->toBe(0)
+            ->and($this->outbox->spool()->lastError())->toContain('is not writable');
+    } finally {
+        unlink($file);
+    }
 });
 
 it('does nothing when nothing is pending', function (): void {

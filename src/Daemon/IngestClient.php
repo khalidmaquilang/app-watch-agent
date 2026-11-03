@@ -53,11 +53,11 @@ final class IngestClient
 
     /**
      * Post the events in batches of at most MAX_EVENTS_PER_BATCH, stopping at the first batch
-     * that should be retried.
+     * that should be retried. Each POST may take at most the given number of seconds.
      *
      * @param  array<int, array<string, mixed>>  $events
      */
-    public function send(array $events): IngestResult
+    public function send(array $events, int $timeout_seconds = self::TIMEOUT_SECONDS): IngestResult
     {
         $batches = array_chunk($events, self::MAX_EVENTS_PER_BATCH);
         $delivered_count = 0;
@@ -66,7 +66,7 @@ final class IngestClient
 
         foreach ($batches as $index => $batch) {
             try {
-                $response = $this->post($batch);
+                $response = $this->post($batch, $timeout_seconds);
             } catch (Throwable $exception) {
                 return new IngestResult(
                     delivered_count: $delivered_count,
@@ -148,7 +148,7 @@ final class IngestClient
      *
      * @throws Throwable
      */
-    private function post(array $events): Response
+    private function post(array $events, int $timeout_seconds): Response
     {
         $token = $this->config->get('app-watch.token');
         $body = gzencode(json_encode(
@@ -161,7 +161,7 @@ final class IngestClient
             ->acceptJson()
             ->withHeaders(['Content-Encoding' => 'gzip'])
             ->withoutRedirecting()
-            ->timeout(self::TIMEOUT_SECONDS)
+            ->timeout(max(1, $timeout_seconds))
             ->withBody($body === false ? '' : $body, 'application/json')
             ->post($this->url());
     }

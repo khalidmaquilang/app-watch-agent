@@ -23,7 +23,24 @@ final readonly class IngestResult
         public array $pending = [],
         public ?int $retry_after_seconds = null,
         public ?string $failure = null,
+        public ?string $spool_file = null,
     ) {}
+
+    /**
+     * The same outcome, for the replay of the given spooled batch file.
+     */
+    public function forSpoolFile(string $spool_file): self
+    {
+        return new self(
+            delivered_count: $this->delivered_count,
+            rejected_count: $this->rejected_count,
+            rejected_status: $this->rejected_status,
+            pending: $this->pending,
+            retry_after_seconds: $this->retry_after_seconds,
+            failure: $this->failure,
+            spool_file: $spool_file,
+        );
+    }
 
     /**
      * Whether some events could not be delivered yet and should be retried.
