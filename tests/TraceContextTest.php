@@ -67,3 +67,79 @@ it('resets the sampling decision when a new trace starts', function (): void {
 
     expect($context->isSampled())->toBeTrue();
 });
+
+it('never samples an ignored trace', function (): void {
+    $context = app(TraceContext::class);
+
+    $context->start(TelemetryTypeEnum::Request, ignored: true);
+
+    expect($context->isActive())->toBeTrue()
+        ->and($context->isSampled())->toBeFalse();
+});
+
+it('tracks how long the current trace has run', function (): void {
+    $context = app(TraceContext::class);
+
+    expect($context->startedAt())->toBeNull()
+        ->and($context->elapsedMs())->toBeNull();
+
+    $context->start(TelemetryTypeEnum::Request);
+    usleep(1000);
+
+    expect($context->startedAt())->toBeInt()
+        ->and($context->elapsedMs())->toBeGreaterThanOrEqual(1.0);
+});
+
+it('restores the parent trace when a nested trace ends', function (): void {
+    config(['app-watch.sample_rates.request' => 0]);
+    $context = app(TraceContext::class);
+    $parent_trace_id = $context->start(TelemetryTypeEnum::Request);
+
+    $nested_trace_id = $context->startNested(TelemetryTypeEnum::Job);
+
+    expect($nested_trace_id)->not->toBe($parent_trace_id)
+        ->and($context->traceId())->toBe($nested_trace_id)
+        ->and($context->isSampled())->toBeTrue();
+
+    $context->endNested();
+
+    expect($context->traceId())->toBe($parent_trace_id)
+        ->and($context->isSampled())->toBeFalse();
+});
+
+it('ends with no trace when a nested trace started outside a trace ends', function (): void {
+    $context = app(TraceContext::class);
+    $context->end();
+
+    $context->startNested(TelemetryTypeEnum::Job);
+    $context->endNested();
+
+    expect($context->traceId())->toBeNull();
+});
+
+it('forgets suspended traces when a new root trace starts', function (): void {
+    $context = app(TraceContext::class);
+    $context->start(TelemetryTypeEnum::Request);
+    $context->startNested(TelemetryTypeEnum::Job);
+
+    $root_trace_id = $context->start(TelemetryTypeEnum::Request);
+    $context->endNested();
+
+    expect($root_trace_id)->not->toBeNull()
+        ->and($context->traceId())->toBeNull();
+});
+
+it('keeps at most the maximum nesting depth of parent traces', function (): void {
+    $context = app(TraceContext::class);
+    $root_trace_id = $context->start(TelemetryTypeEnum::Request);
+
+    foreach (range(1, TraceContext::MAX_NESTING_DEPTH + 1) as $depth) {
+        $context->startNested(TelemetryTypeEnum::Job);
+    }
+
+    foreach (range(1, TraceContext::MAX_NESTING_DEPTH + 1) as $depth) {
+        $context->endNested();
+    }
+
+    expect($context->traceId())->toBeNull()->not->toBe($root_trace_id);
+});
