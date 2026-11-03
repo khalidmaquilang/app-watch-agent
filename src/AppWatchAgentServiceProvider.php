@@ -6,16 +6,23 @@ namespace AppWatch\Agent;
 
 use AppWatch\Agent\Http\Middleware\StartRequestTraceMiddleware;
 use AppWatch\Agent\Listeners\RecordJobListener;
+use AppWatch\Agent\Listeners\RecordOutgoingRequestListener;
+use AppWatch\Agent\Listeners\RecordQueryListener;
 use AppWatch\Agent\Listeners\RecordRequestListener;
 use AppWatch\Agent\Listeners\StartCommandTraceListener;
 use AppWatch\Agent\Support\IgnoreRules;
 use AppWatch\Agent\Support\Sampler;
+use AppWatch\Agent\Support\SqlNormalizer;
 use AppWatch\Agent\Support\TraceContext;
 use Illuminate\Console\Events\CommandStarting;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Http\Kernel as HttpKernelContract;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Http\Events\RequestHandled;
 use Illuminate\Foundation\Http\Kernel as HttpKernel;
+use Illuminate\Http\Client\Events\ConnectionFailed;
+use Illuminate\Http\Client\Events\RequestSending;
+use Illuminate\Http\Client\Events\ResponseReceived;
 use Illuminate\Queue\Events\JobAttempted;
 use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
@@ -36,7 +43,10 @@ class AppWatchAgentServiceProvider extends ServiceProvider
         $this->app->singleton(IgnoreRules::class);
         $this->app->singleton(TraceContext::class);
         $this->app->singleton(Recorder::class);
+        $this->app->singleton(SqlNormalizer::class);
         $this->app->singleton(RecordJobListener::class);
+        $this->app->singleton(RecordQueryListener::class);
+        $this->app->singleton(RecordOutgoingRequestListener::class);
     }
 
     /**
@@ -56,7 +66,8 @@ class AppWatchAgentServiceProvider extends ServiceProvider
     }
 
     /**
-     * Start traces for requests, jobs and commands, and record request and job events.
+     * Start traces for requests, jobs and commands, and record request, job, query and outgoing
+     * request events.
      */
     protected function registerTracing(): void
     {
@@ -82,5 +93,9 @@ class AppWatchAgentServiceProvider extends ServiceProvider
         $events->listen(JobFailed::class, [RecordJobListener::class, 'handleJobFailed']);
         $events->listen(JobReleasedAfterException::class, [RecordJobListener::class, 'handleJobReleasedAfterException']);
         $events->listen(JobAttempted::class, [RecordJobListener::class, 'handleJobAttempted']);
+        $events->listen(QueryExecuted::class, RecordQueryListener::class);
+        $events->listen(RequestSending::class, [RecordOutgoingRequestListener::class, 'handleRequestSending']);
+        $events->listen(ResponseReceived::class, [RecordOutgoingRequestListener::class, 'handleResponseReceived']);
+        $events->listen(ConnectionFailed::class, [RecordOutgoingRequestListener::class, 'handleConnectionFailed']);
     }
 }
