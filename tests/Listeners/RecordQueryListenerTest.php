@@ -17,13 +17,12 @@ beforeEach(function (): void {
     config([
         'app-watch.enabled' => true,
         'app-watch.token' => 'environment-token',
-        'database.default' => 'testing',
-        'database.connections.testing' => ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => ''],
     ]);
 
     $this->trace_context = app(TraceContext::class);
     $this->trace_context->end();
 
+    Schema::dropIfExists('agent_users');
     Schema::create('agent_users', function (Blueprint $table): void {
         $table->id();
         $table->string('email');
@@ -33,6 +32,10 @@ beforeEach(function (): void {
 
     $this->recorder = app(Recorder::class);
     $this->recorder->reset();
+});
+
+afterEach(function (): void {
+    Schema::dropIfExists('agent_users');
 });
 
 /**
@@ -74,7 +77,7 @@ it('records an Eloquent query with normalized SQL and no bindings', function ():
         ->and($events[0])->toMatchArray([
             'type' => 'query',
             'trace_id' => $trace_id,
-            'connection' => 'testing',
+            'connection' => 'pgsql',
             'sql' => 'select * from "agent_users" where "id" = ? and "email" = ? limit ?',
             'sql_hash' => sha1('select * from "agent_users" where "id" = ? and "email" = ? limit ?'),
         ])

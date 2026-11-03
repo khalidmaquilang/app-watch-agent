@@ -44,6 +44,30 @@ abstract class TestCase extends Orchestra
     }
 
     /**
+     * Run every test on Postgres (the raw telemetry tables are range-partitioned, which SQLite cannot do).
+     * The connection comes from the DB_* variables in phpunit.xml, so CI and local runs share one setup.
+     *
+     * @param  Application  $app
+     */
+    protected function defineEnvironment($app): void
+    {
+        $app['config']->set('database.default', 'pgsql');
+        $app['config']->set('database.connections.pgsql', [
+            'driver' => 'pgsql',
+            'host' => env('DB_HOST', '127.0.0.1'),
+            'port' => env('DB_PORT', '5432'),
+            'database' => env('DB_DATABASE', 'app_watch_agent_testing'),
+            'username' => env('DB_USERNAME', 'root'),
+            'password' => env('DB_PASSWORD', ''),
+            'charset' => 'utf8',
+            'prefix' => '',
+            'prefix_indexes' => true,
+            'search_path' => 'public',
+            'sslmode' => 'prefer',
+        ]);
+    }
+
+    /**
      * Get the package providers registered for every test.
      *
      * @param  Application  $app

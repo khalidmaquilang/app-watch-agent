@@ -12,6 +12,7 @@ The app hands each finished trace to a daemon on the same host, which batches ev
 
 - PHP 8.3+
 - Laravel 13
+- Postgres 16+ (telemetry writes go to Postgres only)
 - `pcntl` extension (recommended) so the daemon flushes buffered events on SIGTERM/SIGINT
 
 ## Installation
@@ -124,7 +125,10 @@ No code changes are needed. Each request, queued job run and console command is 
 
 ## Testing
 
+The suite runs on Postgres (see `phpunit.xml`): it needs a local server on `127.0.0.1:5432` with a `root` user and an empty `app_watch_agent_testing` database.
+
 ```bash
+createdb -h 127.0.0.1 -U root app_watch_agent_testing
 cd packages/app-watch-agent
 composer install
 vendor/bin/pest

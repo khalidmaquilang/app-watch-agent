@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 
 afterEach(function (): void {
@@ -35,4 +36,13 @@ it('publishes config/app-watch.php with the app-watch-config tag', function (): 
         ->and(array_keys($published['daemon']))->toBe(['host', 'port', 'flush_events', 'flush_seconds', 'max_buffered_events', 'spool_path', 'spool_max_bytes'])
         ->and(array_keys($published['sample_rates']))->toBe(['request', 'query', 'job', 'outgoing_request', 'cache', 'log', 'exception'])
         ->and(array_keys($published['ignore']))->toBe(['paths', 'jobs', 'queries']);
+});
+
+it('runs the suite on the Postgres app_watch_agent_testing database', function (): void {
+    $connection = DB::connection();
+
+    expect(config('database.default'))->toBe('pgsql')
+        ->and($connection->getDriverName())->toBe('pgsql')
+        ->and($connection->getDatabaseName())->toBe('app_watch_agent_testing')
+        ->and($connection->scalar('select 1'))->toBe(1);
 });
