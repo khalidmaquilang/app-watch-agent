@@ -5,24 +5,35 @@ declare(strict_types=1);
 namespace AppWatch\Agent;
 
 use AppWatch\Agent\Http\Middleware\StartRequestTraceMiddleware;
+use AppWatch\Agent\Listeners\RecordCacheListener;
+use AppWatch\Agent\Listeners\RecordExceptionListener;
 use AppWatch\Agent\Listeners\RecordJobListener;
+use AppWatch\Agent\Listeners\RecordLogListener;
 use AppWatch\Agent\Listeners\RecordOutgoingRequestListener;
 use AppWatch\Agent\Listeners\RecordQueryListener;
 use AppWatch\Agent\Listeners\RecordRequestListener;
 use AppWatch\Agent\Listeners\StartCommandTraceListener;
 use AppWatch\Agent\Support\IgnoreRules;
+use AppWatch\Agent\Support\LogContextSanitizer;
 use AppWatch\Agent\Support\Sampler;
 use AppWatch\Agent\Support\SqlNormalizer;
 use AppWatch\Agent\Support\TraceContext;
+use Illuminate\Cache\Events\CacheHit;
+use Illuminate\Cache\Events\CacheMissed;
+use Illuminate\Cache\Events\KeyForgotten;
+use Illuminate\Cache\Events\KeyWritten;
 use Illuminate\Console\Events\CommandStarting;
+use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Http\Kernel as HttpKernelContract;
 use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Foundation\Exceptions\Handler;
 use Illuminate\Foundation\Http\Events\RequestHandled;
 use Illuminate\Foundation\Http\Kernel as HttpKernel;
 use Illuminate\Http\Client\Events\ConnectionFailed;
 use Illuminate\Http\Client\Events\RequestSending;
 use Illuminate\Http\Client\Events\ResponseReceived;
+use Illuminate\Log\Events\MessageLogged;
 use Illuminate\Queue\Events\JobAttempted;
 use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
@@ -47,6 +58,10 @@ class AppWatchAgentServiceProvider extends ServiceProvider
         $this->app->singleton(RecordJobListener::class);
         $this->app->singleton(RecordQueryListener::class);
         $this->app->singleton(RecordOutgoingRequestListener::class);
+        $this->app->singleton(LogContextSanitizer::class);
+        $this->app->singleton(RecordCacheListener::class);
+        $this->app->singleton(RecordLogListener::class);
+        $this->app->singleton(RecordExceptionListener::class);
     }
 
     /**
@@ -66,8 +81,8 @@ class AppWatchAgentServiceProvider extends ServiceProvider
     }
 
     /**
-     * Start traces for requests, jobs and commands, and record request, job, query and outgoing
-     * request events.
+     * Start traces for requests, jobs and commands, and record request, job, query, outgoing
+     * request, cache, log and exception events.
      */
     protected function registerTracing(): void
     {
@@ -97,5 +112,20 @@ class AppWatchAgentServiceProvider extends ServiceProvider
         $events->listen(RequestSending::class, [RecordOutgoingRequestListener::class, 'handleRequestSending']);
         $events->listen(ResponseReceived::class, [RecordOutgoingRequestListener::class, 'handleResponseReceived']);
         $events->listen(ConnectionFailed::class, [RecordOutgoingRequestListener::class, 'handleConnectionFailed']);
+        $events->listen([CacheHit::class, CacheMissed::class, KeyWritten::class, KeyForgotten::class], RecordCacheListener::class);
+        $events->listen(MessageLogged::class, RecordLogListener::class);
+
+        $register_reportable = function (mixed $handler): void {
+            if ($handler instanceof Handler) {
+                $handler->reportable([$this->app->make(RecordExceptionListener::class), 'handle']);
+            }
+        };
+
+        // Only the framework's handler supports reportable callbacks; it may not be resolved yet.
+        if ($this->app->resolved(ExceptionHandler::class)) {
+            $register_reportable($this->app->make(ExceptionHandler::class));
+        } else {
+            $this->app->afterResolving(ExceptionHandler::class, $register_reportable);
+        }
     }
 }
