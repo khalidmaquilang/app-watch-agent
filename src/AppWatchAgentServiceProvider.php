@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AppWatch\Agent;
 
+use AppWatch\Agent\Console\AgentCommand;
 use AppWatch\Agent\Http\Middleware\StartRequestTraceMiddleware;
 use AppWatch\Agent\Listeners\FlushTraceListener;
 use AppWatch\Agent\Listeners\RecordCacheListener;
@@ -86,6 +87,8 @@ class AppWatchAgentServiceProvider extends ServiceProvider
             $this->publishes([
                 __DIR__.'/../config/app-watch.php' => config_path('app-watch.php'),
             ], 'app-watch-config');
+
+            $this->commands([AgentCommand::class]);
         }
 
         if ((bool) config('app-watch.enabled', true)) {

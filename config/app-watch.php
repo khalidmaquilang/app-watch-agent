@@ -37,13 +37,20 @@ return [
     | Local Daemon
     |--------------------------------------------------------------------------
     |
-    | Where the app sends recorded events (newline-delimited JSON over TCP).
+    | Where the app sends recorded events (newline-delimited JSON over TCP) and
+    | where `php artisan app-watch:agent` listens. The daemon posts a batch once
+    | `flush_events` events are buffered or the oldest has waited
+    | `flush_seconds`, and keeps at most `max_buffered_events` in memory while
+    | the monitor is unreachable (the oldest are dropped past that).
     |
     */
 
     'daemon' => [
         'host' => env('APP_WATCH_DAEMON_HOST', '127.0.0.1'),
         'port' => (int) env('APP_WATCH_DAEMON_PORT', 2407),
+        'flush_events' => (int) env('APP_WATCH_DAEMON_FLUSH_EVENTS', 500),
+        'flush_seconds' => (int) env('APP_WATCH_DAEMON_FLUSH_SECONDS', 5),
+        'max_buffered_events' => (int) env('APP_WATCH_DAEMON_MAX_BUFFERED_EVENTS', 10000),
     ],
 
     /*

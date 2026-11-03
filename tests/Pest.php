@@ -15,6 +15,7 @@ use AppWatch\Agent\Recorder;
 use AppWatch\Agent\Tests\TestCase;
 use AppWatch\Agent\Transport\FakeTransport;
 use AppWatch\Agent\Transport\Transport;
+use Illuminate\Http\Client\Request;
 
 pest()->extend(TestCase::class)->in(__DIR__);
 
@@ -167,4 +168,57 @@ function logEvent(string $trace_id, LogLevelEnum $level = LogLevelEnum::Error): 
 function exceptionEvent(string $trace_id): ExceptionEventPayload
 {
     return new ExceptionEventPayload(EventMetadata::capture($trace_id), RuntimeException::class, 'Boom', '/app/a.php', 1, [], false);
+}
+
+/**
+ * The v1 contract fixture batch (tests/Fixtures/ingest-batch-v1.json).
+ *
+ * @return array{sent_at: string, environment: array<string, string>, events: array<int, array<string, mixed>>}
+ */
+function fixtureBatch(): array
+{
+    return json_decode((string) file_get_contents(__DIR__.'/Fixtures/ingest-batch-v1.json'), true, flags: JSON_THROW_ON_ERROR);
+}
+
+/**
+ * The given number of v1 events (copies of the fixture's request event, numbered by path).
+ *
+ * @return array<int, array<string, mixed>>
+ */
+function daemonEvents(int $count): array
+{
+    $event = fixtureEvent('request');
+
+    if ($count < 1) {
+        return [];
+    }
+
+    return array_map(static fn (int $index): array => [...$event, 'path' => "/orders/{$index}"], range(1, $count));
+}
+
+/**
+ * The batch an ingest request carried: its gzip body, decoded.
+ *
+ * @return array<string, mixed>
+ */
+function ingestBatch(Request $request): array
+{
+    $json = gzdecode($request->body());
+
+    if ($json === false) {
+        throw new RuntimeException('The ingest request body is not gzip.');
+    }
+
+    return json_decode($json, true, flags: JSON_THROW_ON_ERROR);
+}
+
+/**
+ * Configure a token and monitor URL so the daemon can deliver.
+ */
+function configureMonitor(): void
+{
+    config([
+        'app-watch.token' => 'aw_test_token',
+        'app-watch.monitor_url' => 'https://monitor.test',
+    ]);
 }
