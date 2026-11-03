@@ -1,0 +1,111 @@
+{
+    "sent_at": "2026-11-03T05:41:05.000000+00:00",
+    "environment": {
+        "php_version": "8.5.12",
+        "laravel_version": "13.0.0",
+        "agent_version": "1.0.0",
+        "host": "web-1"
+    },
+    "events": [
+        {
+            "type": "request",
+            "trace_id": "9b2f6a2e-3c1d-4f5a-8b7e-1a2b3c4d5e6f",
+            "recorded_at": "2026-11-03T05:41:03.123456+00:00",
+            "host": "web-1",
+            "deploy": "v1.4.2",
+            "method": "GET",
+            "route": "orders/{order}",
+            "path": "/orders/42",
+            "status_code": 200,
+            "duration_ms": 87.42,
+            "memory_peak_bytes": 18874368
+        },
+        {
+            "type": "query",
+            "trace_id": "9b2f6a2e-3c1d-4f5a-8b7e-1a2b3c4d5e6f",
+            "recorded_at": "2026-11-03T05:41:03.140211+00:00",
+            "host": "web-1",
+            "deploy": "v1.4.2",
+            "connection": "pgsql",
+            "sql": "select * from \"orders\" where \"id\" = ? limit 1",
+            "sql_hash": "3e26a19500f48bd8a052683972c30b6587ea7aba",
+            "duration_ms": 1.27
+        },
+        {
+            "type": "job",
+            "trace_id": "0e7c1d9a-6b4f-4c2e-9a1d-7f3e5b2c8a41",
+            "recorded_at": "2026-11-03T05:41:04.002931+00:00",
+            "host": "worker-1",
+            "deploy": "v1.4.2",
+            "job_class": "App\\Jobs\\SendOrderConfirmationJob",
+            "queue": "default",
+            "connection": "redis",
+            "status": "processed",
+            "attempt": 1,
+            "duration_ms": 312.5
+        },
+        {
+            "type": "outgoing_request",
+            "trace_id": "9b2f6a2e-3c1d-4f5a-8b7e-1a2b3c4d5e6f",
+            "recorded_at": "2026-11-03T05:41:03.180004+00:00",
+            "host": "web-1",
+            "deploy": "v1.4.2",
+            "method": "POST",
+            "target_host": "api.payments.example",
+            "url": "https://api.payments.example/v2/charges",
+            "status_code": 201,
+            "failed": false,
+            "duration_ms": 45.9
+        },
+        {
+            "type": "cache",
+            "trace_id": "9b2f6a2e-3c1d-4f5a-8b7e-1a2b3c4d5e6f",
+            "recorded_at": "2026-11-03T05:41:03.125001+00:00",
+            "host": "web-1",
+            "deploy": "v1.4.2",
+            "store": "redis",
+            "key": "orders:42",
+            "operation": "miss",
+            "duration_ms": 0.31
+        },
+        {
+            "type": "log",
+            "trace_id": "9b2f6a2e-3c1d-4f5a-8b7e-1a2b3c4d5e6f",
+            "recorded_at": "2026-11-03T05:41:03.190777+00:00",
+            "host": "web-1",
+            "deploy": null,
+            "level": "warning",
+            "message": "Payment provider responded slowly",
+            "context": {
+                "order_id": 42,
+                "provider": "payments"
+            }
+        },
+        {
+            "type": "exception",
+            "trace_id": "0e7c1d9a-6b4f-4c2e-9a1d-7f3e5b2c8a41",
+            "recorded_at": "2026-11-03T05:41:04.010550+00:00",
+            "host": "worker-1",
+            "deploy": "v1.4.2",
+            "class": "RuntimeException",
+            "message": "Mail transport unavailable",
+            "file": "/var/www/app/Mail/Transport.php",
+            "line": 88,
+            "trace": [
+                {
+                    "file": "/var/www/app/Jobs/SendOrderConfirmationJob.php",
+                    "line": 31,
+                    "function": "send",
+                    "class": "App\\Mail\\Transport"
+                },
+                {
+                    "file": null,
+                    "line": null,
+                    "function": "{closure}",
+                    "class": null
+                }
+            ],
+            "handled": false
+        }
+    ]
+}
