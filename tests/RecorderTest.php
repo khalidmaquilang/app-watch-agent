@@ -104,7 +104,7 @@ it('samples a seeded request rate of 0.5 deterministically per trace', function 
     $first_run = $run();
 
     expect($run())->toBe($first_run)
-        ->and(array_unique($first_run))->toEqualCanonicalizing([0, 2]);
+        ->and(array_values(array_unique($first_run)))->toEqualCanonicalizing([0, 2]);
 });
 
 it('samples other types per event', function (): void {
