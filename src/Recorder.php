@@ -6,10 +6,10 @@ namespace AppWatch\Agent;
 
 use AppWatch\Agent\Enums\TelemetryTypeEnum;
 use AppWatch\Agent\Payloads\EventPayload;
+use AppWatch\Agent\Support\AgentConfiguration;
 use AppWatch\Agent\Support\IgnoreRules;
 use AppWatch\Agent\Support\Sampler;
 use AppWatch\Agent\Support\TraceContext;
-use Illuminate\Contracts\Config\Repository;
 use Throwable;
 
 /**
@@ -41,24 +41,18 @@ final class Recorder
      * The recorder's collaborators.
      */
     public function __construct(
-        private readonly Repository $config,
+        private readonly AgentConfiguration $agent_configuration,
         private readonly TraceContext $trace_context,
         private readonly Sampler $sampler,
         private readonly IgnoreRules $ignore_rules,
     ) {}
 
     /**
-     * Whether recording is on: `enabled` is true and a token is configured.
+     * Whether recording is on: the agent is configured (see AgentConfiguration::isConfigured()).
      */
     public function isEnabled(): bool
     {
-        try {
-            $token = $this->config->get('app-watch.token');
-
-            return (bool) $this->config->get('app-watch.enabled', true) && is_string($token) && $token !== '';
-        } catch (Throwable) {
-            return false;
-        }
+        return $this->agent_configuration->isConfigured();
     }
 
     /**

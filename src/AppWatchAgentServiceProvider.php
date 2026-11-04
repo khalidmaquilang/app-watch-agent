@@ -17,6 +17,7 @@ use AppWatch\Agent\Listeners\RecordQueryListener;
 use AppWatch\Agent\Listeners\RecordRequestListener;
 use AppWatch\Agent\Listeners\StartCommandTraceListener;
 use AppWatch\Agent\Storage\PartitionDdl;
+use AppWatch\Agent\Support\AgentConfiguration;
 use AppWatch\Agent\Support\IgnoreRules;
 use AppWatch\Agent\Support\LogContextSanitizer;
 use AppWatch\Agent\Support\Sampler;
@@ -59,6 +60,9 @@ class AppWatchAgentServiceProvider extends ServiceProvider
     {
         $this->mergeConfigFrom(__DIR__.'/../config/app-watch.php', 'app-watch');
 
+        $this->registerTelemetryConnection();
+
+        $this->app->singleton(AgentConfiguration::class);
         $this->app->singleton(Sampler::class);
         $this->app->singleton(IgnoreRules::class);
         $this->app->singleton(TraceContext::class);
@@ -94,9 +98,42 @@ class AppWatchAgentServiceProvider extends ServiceProvider
             $this->commands([AgentCommand::class, InstallCommand::class]);
         }
 
-        if ((bool) config('app-watch.enabled', true)) {
+        if ($this->app->make(AgentConfiguration::class)->isConfigured()) {
             $this->registerTracing();
         }
+    }
+
+    /**
+     * Register the telemetry connection (`app-watch.connection`) as a pgsql connection from the
+     * `app-watch.database` settings, unless the host app already defines a connection with that
+     * name (it then wins untouched) or no database name is set.
+     */
+    protected function registerTelemetryConnection(): void
+    {
+        $config = $this->app->make('config');
+        $connection = $config->get('app-watch.connection');
+        $database = $config->get('app-watch.database');
+
+        if (! is_string($connection) || $connection === '' || $config->get('database.connections.'.$connection) !== null) {
+            return;
+        }
+
+        if (! is_array($database) || ! is_string($database['database'] ?? null) || $database['database'] === '') {
+            return;
+        }
+
+        $config->set('database.connections.'.$connection, [
+            'driver' => 'pgsql',
+            'host' => $database['host'] ?? null,
+            'port' => $database['port'] ?? 5432,
+            'database' => $database['database'],
+            'username' => $database['username'] ?? null,
+            'password' => $database['password'] ?? null,
+            'charset' => 'utf8',
+            'prefix' => '',
+            'search_path' => 'public',
+            'sslmode' => $database['sslmode'] ?? 'require',
+        ]);
     }
 
     /**

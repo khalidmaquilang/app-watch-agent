@@ -13,7 +13,6 @@ use Illuminate\Support\Facades\Log;
 beforeEach(function (): void {
     config([
         'app-watch.enabled' => true,
-        'app-watch.token' => 'environment-token',
         'app-watch.log_level' => 'warning',
         'logging.default' => 'null',
     ]);
@@ -189,9 +188,9 @@ it('records nothing outside a trace', function (): void {
     expect(flushedLogEvents($trace_id))->toBe([]);
 });
 
-it('records nothing without a token', function (): void {
+it('records nothing without an environment id', function (): void {
     $trace_id = $this->trace_context->start();
-    config(['app-watch.token' => null]);
+    config(['app-watch.environment_id' => null]);
 
     Log::error('No token');
 

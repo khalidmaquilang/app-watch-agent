@@ -46,6 +46,9 @@ abstract class TestCase extends Orchestra
     /**
      * Run every test on Postgres (the raw telemetry tables are range-partitioned, which SQLite cannot do).
      * The connection comes from the DB_* variables in phpunit.xml, so CI and local runs share one setup.
+     * The agent itself is configured (environment 1, `app_watch` connection on the same test database)
+     * by the APP_WATCH_* variables in phpunit.xml, not here: Testbench registers the package provider,
+     * which builds the `app_watch` connection, before this method runs.
      *
      * @param  Application  $app
      */

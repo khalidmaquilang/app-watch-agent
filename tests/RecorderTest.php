@@ -5,11 +5,12 @@ declare(strict_types=1);
 use AppWatch\Agent\Enums\TelemetryTypeEnum;
 use AppWatch\Agent\Payloads\EventPayload;
 use AppWatch\Agent\Recorder;
+use AppWatch\Agent\Support\AgentConfiguration;
 use AppWatch\Agent\Support\Sampler;
 use AppWatch\Agent\Support\TraceContext;
 
 beforeEach(function (): void {
-    config(['app-watch.enabled' => true, 'app-watch.token' => 'environment-token']);
+    config(['app-watch.enabled' => true]);
 
     $this->recorder = app(Recorder::class);
     $this->trace_context = app(TraceContext::class);
@@ -45,13 +46,24 @@ it('stores nothing when disabled', function (): void {
         ->and($this->recorder->flush('trace-a'))->toBe([]);
 });
 
-it('stores nothing without a token', function (mixed $token): void {
-    config(['app-watch.token' => $token]);
+it('stores nothing while the agent is not configured', function (array $config): void {
+    config($config);
 
     $this->recorder->record(requestEvent('trace-a'));
 
-    expect($this->recorder->flush('trace-a'))->toBe([]);
-})->with(['missing' => [null], 'empty' => ['']]);
+    expect($this->recorder->isEnabled())->toBeFalse()
+        ->and($this->recorder->flush('trace-a'))->toBe([]);
+})->with([
+    'without an environment id' => [['app-watch.environment_id' => null]],
+    'with environment id 0' => [['app-watch.environment_id' => 0]],
+    'with a non-numeric environment id' => [['app-watch.environment_id' => 'abc']],
+    'without the connection' => [['app-watch.connection' => 'missing']],
+]);
+
+it('is enabled while the agent is configured', function (): void {
+    expect($this->recorder->isEnabled())->toBe(app(AgentConfiguration::class)->isConfigured())
+        ->and($this->recorder->isEnabled())->toBeTrue();
+});
 
 it('records no event of an unsampled request trace', function (): void {
     config(['app-watch.sample_rates.request' => 0]);

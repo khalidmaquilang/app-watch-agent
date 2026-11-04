@@ -16,7 +16,7 @@ use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Queue\Events\JobReleasedAfterException;
 
 beforeEach(function (): void {
-    config(['app-watch.enabled' => true, 'app-watch.token' => 'environment-token', 'queue.default' => 'sync']);
+    config(['app-watch.enabled' => true, 'queue.default' => 'sync']);
 
     TracedJob::$trace_ids = [];
     TracedJob::$during = null;
@@ -127,8 +127,8 @@ it('records nothing when the job trace is not sampled', function (): void {
     expect(recordedEvents((string) TracedJob::$trace_ids[0]))->toBe([]);
 });
 
-it('records nothing without a token', function (): void {
-    config(['app-watch.token' => '']);
+it('records nothing without an environment id', function (): void {
+    config(['app-watch.environment_id' => null]);
 
     TracedJob::dispatch();
 

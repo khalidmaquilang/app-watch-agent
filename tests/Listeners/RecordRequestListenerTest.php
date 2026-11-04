@@ -13,7 +13,7 @@ use Illuminate\Contracts\Http\Kernel;
 use Illuminate\Support\Facades\Route;
 
 beforeEach(function (): void {
-    config(['app-watch.enabled' => true, 'app-watch.token' => 'environment-token', 'queue.default' => 'sync']);
+    config(['app-watch.enabled' => true, 'queue.default' => 'sync']);
 
     TracedJob::$trace_ids = [];
     TracedJob::$during = null;
@@ -115,8 +115,8 @@ it('records nothing when the request trace is not sampled', function (): void {
     expect(flushedRequestEvents($this->trace_context->traceId()))->toBe([]);
 });
 
-it('records nothing without a token', function (): void {
-    config(['app-watch.token' => null]);
+it('records nothing without an environment id', function (): void {
+    config(['app-watch.environment_id' => null]);
     $this->trace_context->end();
 
     $this->get('/users/5')->assertOk();

@@ -42,14 +42,19 @@ The service provider is auto-discovered.
 
 1. In the monitor, open the environment's token page (`/settings/environments/{environment}/tokens`) and issue a token. Only organization Owners and Admins can issue tokens.
 
-2. Add the token and monitor URL to the monitored app's `.env`:
+2. Add the environment id, the telemetry database, the token and the monitor URL to the monitored app's `.env`:
 
     ```env
+    APP_WATCH_ENVIRONMENT_ID=123
+    APP_WATCH_DB_HOST=telemetry-db.example.com
+    APP_WATCH_DB_DATABASE=app_watch
+    APP_WATCH_DB_USERNAME=app_watch_agent
+    APP_WATCH_DB_PASSWORD=your-password
     APP_WATCH_TOKEN=your-environment-token
     APP_WATCH_URL=https://monitor.example.com
     ```
 
-    The agent records nothing while `APP_WATCH_TOKEN` is empty or `APP_WATCH_ENABLED=false`.
+    The agent records nothing while `APP_WATCH_ENABLED=false`, while `APP_WATCH_ENVIRONMENT_ID` is not a positive integer, or while its connection (`APP_WATCH_DB_CONNECTION`, default `app_watch`) is missing. The `app_watch` connection is registered from the `APP_WATCH_DB_*` variables unless the app already defines one with that name. The daemon still delivers to the monitor with the token until it writes to the database directly.
 
 3. Optionally publish the config to change sample rates or ignore rules:
 
@@ -59,21 +64,34 @@ The service provider is auto-discovered.
 
 ### Environment variables
 
-| Variable                               | Default                       | Purpose                                              |
-| -------------------------------------- | ----------------------------- | ---------------------------------------------------- |
-| `APP_WATCH_ENABLED`                    | `true`                        | Master switch                                        |
-| `APP_WATCH_TOKEN`                      | —                             | Environment token issued by the monitor              |
-| `APP_WATCH_URL`                        | —                             | Monitor base URL                                     |
-| `APP_WATCH_API_VERSION`                | `v1`                          | Ingest API version                                   |
-| `APP_WATCH_DEPLOY`                     | —                             | Release tag or commit attached to every event        |
-| `APP_WATCH_LOG_LEVEL`                  | `warning`                     | Minimum PSR-3 level of log messages recorded         |
-| `APP_WATCH_DAEMON_HOST`                | `127.0.0.1`                   | Daemon listen/connect host                           |
-| `APP_WATCH_DAEMON_PORT`                | `2407`                        | Daemon listen/connect port                           |
-| `APP_WATCH_DAEMON_FLUSH_EVENTS`        | `500`                         | Post a batch once this many events are buffered      |
-| `APP_WATCH_DAEMON_FLUSH_SECONDS`       | `5`                           | ...or once the oldest buffered event is this old     |
-| `APP_WATCH_DAEMON_MAX_BUFFERED_EVENTS` | `10000`                       | In-memory cap before batches spill to the spool      |
-| `APP_WATCH_DAEMON_SPOOL_PATH`          | `storage/app/app-watch/spool` | Where undeliverable batches are kept                 |
-| `APP_WATCH_DAEMON_SPOOL_MAX_BYTES`     | `104857600` (100 MB)          | Spool size cap; the oldest batches are deleted first |
+| Variable                                  | Default                       | Purpose                                                                                     |
+| ----------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------- |
+| `APP_WATCH_ENABLED`                       | `true`                        | Master switch                                                                               |
+| `APP_WATCH_ENVIRONMENT_ID`                | —                             | Environment id from the monitor; the agent stays silent until it is a positive integer      |
+| `APP_WATCH_DB_CONNECTION`                 | `app_watch`                   | Laravel connection telemetry is written to; name an existing one (e.g. `pgsql`) to reuse it |
+| `APP_WATCH_DB_HOST`                       | —                             | Telemetry Postgres host (used when the agent registers the connection)                      |
+| `APP_WATCH_DB_PORT`                       | `5432`                        | Telemetry Postgres port                                                                     |
+| `APP_WATCH_DB_DATABASE`                   | —                             | Telemetry database name; the connection is only registered when set                         |
+| `APP_WATCH_DB_USERNAME`                   | —                             | Telemetry database user                                                                     |
+| `APP_WATCH_DB_PASSWORD`                   | —                             | Telemetry database password                                                                 |
+| `APP_WATCH_DB_SSLMODE`                    | `require`                     | Postgres `sslmode`                                                                          |
+| `APP_WATCH_RETENTION_DAYS`                | `14`                          | Days of raw telemetry kept (daily partitions)                                               |
+| `APP_WATCH_PARTITIONS_AHEAD_DAYS`         | `7`                           | Future UTC days that get a partition                                                        |
+| `APP_WATCH_ROLLUPS_GRACE_MINUTES`         | `2`                           | Closed minutes the minute rollup re-aggregates                                              |
+| `APP_WATCH_ROLLUPS_MINUTE_RETENTION_DAYS` | `7`                           | Days of minute rollups kept                                                                 |
+| `APP_WATCH_ROLLUPS_HOUR_RETENTION_DAYS`   | `90`                          | Days of hour rollups kept                                                                   |
+| `APP_WATCH_TOKEN`                         | —                             | Environment token issued by the monitor                                                     |
+| `APP_WATCH_URL`                           | —                             | Monitor base URL                                                                            |
+| `APP_WATCH_API_VERSION`                   | `v1`                          | Ingest API version                                                                          |
+| `APP_WATCH_DEPLOY`                        | —                             | Release tag or commit attached to every event                                               |
+| `APP_WATCH_LOG_LEVEL`                     | `warning`                     | Minimum PSR-3 level of log messages recorded                                                |
+| `APP_WATCH_DAEMON_HOST`                   | `127.0.0.1`                   | Daemon listen/connect host                                                                  |
+| `APP_WATCH_DAEMON_PORT`                   | `2407`                        | Daemon listen/connect port                                                                  |
+| `APP_WATCH_DAEMON_FLUSH_EVENTS`           | `500`                         | Post a batch once this many events are buffered                                             |
+| `APP_WATCH_DAEMON_FLUSH_SECONDS`          | `5`                           | ...or once the oldest buffered event is this old                                            |
+| `APP_WATCH_DAEMON_MAX_BUFFERED_EVENTS`    | `10000`                       | In-memory cap before batches spill to the spool                                             |
+| `APP_WATCH_DAEMON_SPOOL_PATH`             | `storage/app/app-watch/spool` | Where undeliverable batches are kept                                                        |
+| `APP_WATCH_DAEMON_SPOOL_MAX_BYTES`        | `104857600` (100 MB)          | Spool size cap; the oldest batches are deleted first                                        |
 
 ### Sample rates and ignore rules
 

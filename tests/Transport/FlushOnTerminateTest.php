@@ -25,7 +25,7 @@ use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Output\NullOutput;
 
 beforeEach(function (): void {
-    config(['app-watch.enabled' => true, 'app-watch.token' => 'environment-token', 'queue.default' => 'sync']);
+    config(['app-watch.enabled' => true, 'queue.default' => 'sync']);
 
     TracedJob::$trace_ids = [];
     TracedJob::$during = null;
@@ -70,15 +70,16 @@ function eventTypes(array $events): array
     return array_map(fn (EventPayload $event): string => $event->type()->value, $events);
 }
 
-it('resolves the daemon transport while enabled and the null transport otherwise', function (array $config, string $expected): void {
+it('resolves the daemon transport while configured and the null transport otherwise', function (array $config, string $expected): void {
     config($config);
     app()->forgetInstance(Transport::class);
 
     expect(app(Transport::class))->toBeInstanceOf($expected);
 })->with([
-    'enabled with a token' => [['app-watch.enabled' => true, 'app-watch.token' => 'environment-token'], DaemonTransport::class],
+    'configured' => [['app-watch.enabled' => true], DaemonTransport::class],
     'disabled' => [['app-watch.enabled' => false], NullTransport::class],
-    'without a token' => [['app-watch.token' => null], NullTransport::class],
+    'without an environment id' => [['app-watch.environment_id' => null], NullTransport::class],
+    'without the connection' => [['app-watch.connection' => 'missing'], NullTransport::class],
 ]);
 
 it('sends every event of a request to the daemon as v1 JSON lines with the request trace id', function (): void {

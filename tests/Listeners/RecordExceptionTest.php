@@ -13,7 +13,6 @@ use Illuminate\Contracts\Debug\ExceptionHandler;
 beforeEach(function (): void {
     config([
         'app-watch.enabled' => true,
-        'app-watch.token' => 'environment-token',
         'logging.default' => 'null',
     ]);
 
@@ -136,9 +135,9 @@ it('records nothing outside a trace', function (): void {
     expect(flushedExceptionEvents($trace_id))->toBe([]);
 });
 
-it('records nothing without a token', function (): void {
+it('records nothing without an environment id', function (): void {
     $trace_id = $this->trace_context->start();
-    config(['app-watch.token' => null]);
+    config(['app-watch.environment_id' => null]);
 
     report(new RuntimeException('no token'));
 

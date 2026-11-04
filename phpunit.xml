@@ -21,5 +21,12 @@
         <env name="DB_PORT" value="5432"/>
         <env name="DB_USERNAME" value="root"/>
         <env name="DB_PASSWORD" value=""/>
+        <env name="APP_WATCH_ENVIRONMENT_ID" value="1"/>
+        <env name="APP_WATCH_DB_HOST" value="127.0.0.1"/>
+        <env name="APP_WATCH_DB_PORT" value="5432"/>
+        <env name="APP_WATCH_DB_DATABASE" value="app_watch_agent_testing"/>
+        <env name="APP_WATCH_DB_USERNAME" value="root"/>
+        <env name="APP_WATCH_DB_PASSWORD" value=""/>
+        <env name="APP_WATCH_DB_SSLMODE" value="prefer"/>
     </php>
 </phpunit>

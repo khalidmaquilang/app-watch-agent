@@ -8,7 +8,7 @@ use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Output\NullOutput;
 
 beforeEach(function (): void {
-    config(['app-watch.enabled' => true, 'app-watch.token' => 'environment-token']);
+    config(['app-watch.enabled' => true]);
 
     $this->trace_context = app(TraceContext::class);
     $this->trace_context->end();
@@ -38,8 +38,8 @@ it('does not trace long-running commands', function (string $command): void {
     expect($this->trace_context->traceId())->toBeNull();
 })->with(['app-watch:agent', 'queue:work', 'queue:listen', 'schedule:run', 'schedule:work', 'horizon', 'octane:start']);
 
-it('does not trace commands without a token', function (): void {
-    config(['app-watch.token' => null]);
+it('does not trace commands without an environment id', function (): void {
+    config(['app-watch.environment_id' => null]);
 
     event(new CommandStarting('orders:sync', new ArrayInput([]), new NullOutput));
 

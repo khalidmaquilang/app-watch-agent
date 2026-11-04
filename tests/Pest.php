@@ -241,3 +241,43 @@ function spooledBatches(): array
         return json_decode($json, true, flags: JSON_THROW_ON_ERROR);
     }, app(Spool::class)->files());
 }
+
+/**
+ * Run the given callback with the environment variables set (or unset when null), then restore them.
+ *
+ * @param  array<string, string|null>  $variables
+ */
+function withEnvironmentVariables(array $variables, Closure $callback): mixed
+{
+    $original = [];
+
+    foreach ($variables as $name => $value) {
+        $original[$name] = getenv($name) === false ? null : (string) getenv($name);
+        setEnvironmentVariable($name, $value);
+    }
+
+    try {
+        return $callback();
+    } finally {
+        foreach ($original as $name => $value) {
+            setEnvironmentVariable($name, $value);
+        }
+    }
+}
+
+/**
+ * Set (or unset when null) one environment variable everywhere env() reads it from.
+ */
+function setEnvironmentVariable(string $name, ?string $value): void
+{
+    if ($value === null) {
+        unset($_ENV[$name], $_SERVER[$name]);
+        putenv($name);
+
+        return;
+    }
+
+    $_ENV[$name] = $value;
+    $_SERVER[$name] = $value;
+    putenv("{$name}={$value}");
+}

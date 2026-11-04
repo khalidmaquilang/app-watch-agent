@@ -9,11 +9,103 @@ return [
     | Enabled
     |--------------------------------------------------------------------------
     |
-    | Master switch. The agent also stays silent while no token is configured.
+    | Master switch. The agent also stays silent while no environment id or
+    | telemetry database connection is configured.
     |
     */
 
     'enabled' => (bool) env('APP_WATCH_ENABLED', true),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Environment
+    |--------------------------------------------------------------------------
+    |
+    | The id of this app's environment, shown on the App Watch monitor's
+    | Settings -> Environments page. It is stored on every telemetry row, so
+    | several projects can share one database. Null while unset; anything that
+    | is not a positive integer keeps the agent silent.
+    |
+    */
+
+    'environment_id' => env('APP_WATCH_ENVIRONMENT_ID') === null ? null : (int) env('APP_WATCH_ENVIRONMENT_ID'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Telemetry Database
+    |--------------------------------------------------------------------------
+    |
+    | The name of the Laravel database connection the agent writes telemetry
+    | to. Unless the host app already defines a connection with this name, the
+    | agent registers it as a pgsql connection from the `database` settings
+    | (when `database.database` is set). Point it at an existing connection,
+    | e.g. "pgsql", to reuse the app's own database; `database` is then ignored.
+    |
+    */
+
+    'connection' => env('APP_WATCH_DB_CONNECTION', 'app_watch'),
+
+    'database' => [
+        'host' => env('APP_WATCH_DB_HOST'),
+        'port' => (int) env('APP_WATCH_DB_PORT', 5432),
+        'database' => env('APP_WATCH_DB_DATABASE'),
+        'username' => env('APP_WATCH_DB_USERNAME'),
+        'password' => env('APP_WATCH_DB_PASSWORD'),
+        'sslmode' => env('APP_WATCH_DB_SSLMODE', 'require'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Raw Telemetry Retention
+    |--------------------------------------------------------------------------
+    |
+    | How many days of raw telemetry are kept: daily partitions whose upper
+    | bound is at or before the start of (today - retention_days) in UTC are
+    | dropped. `partitions_ahead_days` future UTC days get a partition on top
+    | of today, because Postgres rejects inserts into a day without one.
+    |
+    */
+
+    'retention_days' => (int) env('APP_WATCH_RETENTION_DAYS', 14),
+
+    'partitions_ahead_days' => (int) env('APP_WATCH_PARTITIONS_AHEAD_DAYS', 7),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Rollups
+    |--------------------------------------------------------------------------
+    |
+    | How many already-closed minutes the minute rollup re-aggregates on every
+    | run (so late events are still counted), and how many days of minute and
+    | hour rollups are kept before they are pruned.
+    |
+    */
+
+    'rollups' => [
+        'grace_minutes' => (int) env('APP_WATCH_ROLLUPS_GRACE_MINUTES', 2),
+        'minute_retention_days' => (int) env('APP_WATCH_ROLLUPS_MINUTE_RETENTION_DAYS', 7),
+        'hour_retention_days' => (int) env('APP_WATCH_ROLLUPS_HOUR_RETENTION_DAYS', 90),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Partitioned Raw Tables
+    |--------------------------------------------------------------------------
+    |
+    | The raw telemetry tables declared PARTITION BY RANGE (recorded_at). These
+    | names are interpolated into partition DDL, so they come from here only.
+    |
+    */
+
+    'tables' => [
+        'requests',
+        'queries',
+        'job_runs',
+        'outgoing_requests',
+        'cache_events',
+        'logs',
+        'exception_occurrences',
+    ],
 
     /*
     |--------------------------------------------------------------------------

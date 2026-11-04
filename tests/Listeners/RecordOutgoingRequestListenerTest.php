@@ -13,7 +13,6 @@ use Illuminate\Support\Facades\Http;
 beforeEach(function (): void {
     config([
         'app-watch.enabled' => true,
-        'app-watch.token' => 'environment-token',
         'app-watch.monitor_url' => 'https://monitor.example.com',
     ]);
 
@@ -155,8 +154,8 @@ it('records nothing when outgoing requests are not sampled', function (): void {
     expect(flushedOutgoingRequestEvents($this->trace_id))->toBe([]);
 });
 
-it('records nothing without a token', function (): void {
-    config(['app-watch.token' => null]);
+it('records nothing without an environment id', function (): void {
+    config(['app-watch.environment_id' => null]);
     Http::fake(['*' => Http::response('', 200)]);
 
     Http::get('https://api.example.com/v1/items');

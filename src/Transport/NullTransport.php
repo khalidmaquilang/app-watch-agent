@@ -7,7 +7,7 @@ namespace AppWatch\Agent\Transport;
 use AppWatch\Agent\Payloads\EventPayload;
 
 /**
- * Discards every event. Used while the agent is disabled or has no token.
+ * Discards every event. Used while the agent is disabled or not configured.
  */
 final readonly class NullTransport implements Transport
 {
