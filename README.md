@@ -131,6 +131,22 @@ php artisan app-watch:partitions [--database=app_watch]
 
 Run it daily. It drops the raw telemetry partitions (`{table}_pYYYYMMDD`, UTC days) older than `APP_WATCH_RETENTION_DAYS` (default 14, must be at least 1), then creates today … today + `APP_WATCH_PARTITIONS_AHEAD_DAYS` (default 7), and prints `Created N partition(s), dropped M partition(s).` A second run the same day changes nothing. Only children of the tables in `app-watch.tables` (a fixed whitelist) are ever touched. Every partition is created or dropped by its own statement without a wrapping transaction; use a direct or session-mode connection, not a transaction-mode pooler (PgBouncer in transaction mode, Supabase port 6543).
 
+## Rollup upkeep
+
+```bash
+php artisan app-watch:rollups minute [--database=app_watch]
+php artisan app-watch:rollups hour   [--database=app_watch]
+php artisan app-watch:rollups prune  [--database=app_watch]
+```
+
+The dashboards chart from per-minute and per-hour rollups the agent builds in the telemetry database. They are plain commands, not queued jobs, so no queue worker is needed:
+
+- `minute` — run every minute. Re-aggregates the last `APP_WATCH_ROLLUPS_GRACE_MINUTES` closed minutes (at least 1) into `rollups_minute`, so events arriving late are still counted. The open minute is never aggregated.
+- `hour` — run at `hourlyAt(2)`. Aggregates the last closed hour from the raw rows (percentiles cannot be merged from minutes) into `rollups_hour`; within the grace window after the hour boundary it also re-aggregates the hour before.
+- `prune` — run daily. Deletes minute rollups older than `APP_WATCH_ROLLUPS_MINUTE_RETENTION_DAYS` and hour rollups older than `APP_WATCH_ROLLUPS_HOUR_RETENTION_DAYS` (a bucket exactly at the cutoff is kept), in chunks of 10 000 rows.
+
+Rows are grouped per environment, type, key (truncated to 512 characters) and bucket, and upserted, so every run is idempotent and several projects can share one database. The command prints the number of buckets upserted or rows pruned; an unknown kind or `--database` connection exits with 1.
+
 ## What is recorded
 
 No code changes are needed. Each request, queued job run and console command is one trace; its events are flushed to the daemon when it ends.
