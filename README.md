@@ -147,6 +147,19 @@ The dashboards chart from per-minute and per-hour rollups the agent builds in th
 
 Rows are grouped per environment, type, key (truncated to 512 characters) and bucket, and upserted, so every run is idempotent and several projects can share one database. The command prints the number of buckets upserted or rows pruned; an unknown kind or `--database` connection exits with 1.
 
+## Scheduling
+
+Once the agent is configured (enabled, `APP_WATCH_ENVIRONMENT_ID` set and a telemetry connection), it registers its own upkeep in the app's scheduler, so all the app needs is `php artisan schedule:run` every minute (or `php artisan schedule:work`):
+
+| Command                    | Runs                |
+| -------------------------- | ------------------- |
+| `app-watch:rollups minute` | every minute        |
+| `app-watch:rollups hour`   | hourly at :02       |
+| `app-watch:rollups prune`  | daily at 00:15      |
+| `app-watch:partitions`     | daily at 00:05      |
+
+Every entry runs `withoutOverlapping()` and `onOneServer()`. `onOneServer()` needs a cache store with atomic locks shared by all servers (`redis`, `database`, `memcached`, `dynamodb`, or `file` on a shared disk) as the scheduler's store (`cache.schedule_store`, else the default store). With the `array` or `null` store the agent logs a warning and schedules the entries without `onOneServer()`, which is fine for a single server; multi-server apps must use a lock-capable cache store or every server runs the upkeep. An unconfigured or disabled agent schedules nothing. `php artisan schedule:list` shows the entries.
+
 ## What is recorded
 
 No code changes are needed. Each request, queued job run and console command is one trace; its events are flushed to the daemon when it ends.

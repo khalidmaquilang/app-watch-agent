@@ -47,12 +47,17 @@ use AppWatch\Agent\Support\TraceContext;
 use AppWatch\Agent\Transport\DaemonTransport;
 use AppWatch\Agent\Transport\NullTransport;
 use AppWatch\Agent\Transport\Transport;
+use Illuminate\Cache\ArrayStore;
 use Illuminate\Cache\Events\CacheHit;
 use Illuminate\Cache\Events\CacheMissed;
 use Illuminate\Cache\Events\KeyForgotten;
 use Illuminate\Cache\Events\KeyWritten;
+use Illuminate\Cache\NullStore;
 use Illuminate\Console\Events\CommandFinished;
 use Illuminate\Console\Events\CommandStarting;
+use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Contracts\Cache\Factory as CacheFactory;
+use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Foundation\Application;
@@ -70,7 +75,9 @@ use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Queue\Events\JobReleasedAfterException;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\ServiceProvider;
+use Throwable;
 
 class AppWatchAgentServiceProvider extends ServiceProvider
 {
@@ -136,11 +143,71 @@ class AppWatchAgentServiceProvider extends ServiceProvider
             ], 'app-watch-config');
 
             $this->commands([AgentCommand::class, InstallCommand::class, PartitionsCommand::class, RollupsCommand::class]);
+
+            // The schedule is resolved lazily (schedule:run / schedule:list), never through the HTTP kernel.
+            $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
+                $this->registerSchedule($schedule);
+            });
         }
 
         if ($this->app->make(AgentConfiguration::class)->isConfigured()) {
             $this->registerTracing();
         }
+    }
+
+    /**
+     * Schedule the agent's upkeep (minute/hour rollups, rollup pruning and daily partitions), each
+     * without overlapping and on one server. Nothing is scheduled unless the agent is configured.
+     * When the schedule's cache store cannot hold locks shared across servers, a warning is logged
+     * and the events are scheduled without `onOneServer()`, so a single-server app keeps working.
+     */
+    protected function registerSchedule(Schedule $schedule): void
+    {
+        if (! $this->app->make(AgentConfiguration::class)->isConfigured()) {
+            return;
+        }
+
+        $on_one_server = $this->scheduleCacheSupportsLocks();
+
+        if (! $on_one_server) {
+            Log::warning('App Watch: the schedule cache store does not support shared atomic locks, so the agent upkeep is scheduled without onOneServer(). Multi-server apps need a lock-capable cache store (redis, database, memcached, dynamodb or file).');
+        }
+
+        $events = [
+            $schedule->command('app-watch:rollups minute')->everyMinute()->description('App Watch: build minute rollups'),
+            $schedule->command('app-watch:rollups hour')->hourlyAt(2)->description('App Watch: build hour rollups'),
+            $schedule->command('app-watch:rollups prune')->dailyAt('00:15')->description('App Watch: prune expired rollups'),
+            $schedule->command('app-watch:partitions')->dailyAt('00:05')->description('App Watch: create and drop daily partitions'),
+        ];
+
+        foreach ($events as $event) {
+            $event->withoutOverlapping();
+
+            if ($on_one_server) {
+                $event->onOneServer();
+            }
+        }
+    }
+
+    /**
+     * Whether the cache store the scheduler uses (`cache.schedule_store`, else the default store)
+     * provides atomic locks shared across servers. The array and null stores implement locks only
+     * within one process, so they do not count. Never throws.
+     */
+    protected function scheduleCacheSupportsLocks(): bool
+    {
+        try {
+            $store_name = $this->app->make('config')->get('cache.schedule_store');
+            $store = $this->app->make(CacheFactory::class)
+                ->store(is_string($store_name) && $store_name !== '' ? $store_name : null)
+                ->getStore();
+        } catch (Throwable) {
+            return false;
+        }
+
+        return $store instanceof LockProvider
+            && ! $store instanceof ArrayStore
+            && ! $store instanceof NullStore;
     }
 
     /**
