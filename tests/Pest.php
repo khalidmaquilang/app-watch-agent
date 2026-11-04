@@ -16,7 +16,10 @@ use AppWatch\Agent\Recorder;
 use AppWatch\Agent\Tests\TestCase;
 use AppWatch\Agent\Transport\FakeTransport;
 use AppWatch\Agent\Transport\Transport;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Http\Client\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 pest()->extend(TestCase::class)->in(__DIR__);
 
@@ -280,4 +283,67 @@ function setEnvironmentVariable(string $name, ?string $value): void
     $_ENV[$name] = $value;
     $_SERVER[$name] = $value;
     putenv("{$name}={$value}");
+}
+
+/**
+ * Install the agent's telemetry schema on a clean `app_watch` connection, with the daily partitions
+ * from today (Carbon's test "now" included) to `app-watch.partitions_ahead_days` ahead.
+ */
+function installTelemetrySchema(): void
+{
+    Schema::connection('app_watch')->dropAllTables();
+    test()->artisan('app-watch:install', ['--database' => 'app_watch'])->assertExitCode(0);
+}
+
+/**
+ * Drop every table of the `app_watch` connection.
+ */
+function dropTelemetrySchema(): void
+{
+    Schema::connection('app_watch')->dropAllTables();
+}
+
+/**
+ * The fixture event of the given type with overrides applied.
+ *
+ * @param  array<string, mixed>  $overrides
+ * @return array<string, mixed>
+ */
+function storageEvent(string $type, array $overrides = []): array
+{
+    return [...fixtureEvent($type), ...$overrides];
+}
+
+/**
+ * The row count of every table the batch writer writes, by table.
+ *
+ * @return array<string, int>
+ */
+function telemetryRowCounts(): array
+{
+    $counts = [];
+
+    foreach ([...AppWatch\Agent\Storage\Schema::PARTITIONED_TABLES, 'exception_groups'] as $table) {
+        $counts[$table] = DB::connection('app_watch')->table($table)->count();
+    }
+
+    return $counts;
+}
+
+/**
+ * Count the INSERT statements into the given table run on the `app_watch` connection from now on.
+ *
+ * @return ArrayObject<string, int>
+ */
+function countTelemetryInserts(string $table): ArrayObject
+{
+    $counter = new ArrayObject(['inserts' => 0]);
+
+    DB::connection('app_watch')->listen(function (QueryExecuted $query) use ($counter, $table): void {
+        if (str_starts_with($query->sql, "insert into \"{$table}\"")) {
+            $counter['inserts']++;
+        }
+    });
+
+    return $counter;
 }
