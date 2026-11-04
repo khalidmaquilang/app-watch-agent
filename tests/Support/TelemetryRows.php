@@ -48,6 +48,22 @@ final class TelemetryRows
     }
 
     /**
+     * The number of rows of the given table stored for the given environment.
+     */
+    public static function countFor(string $table, int $environment_id): int
+    {
+        return DB::connection('app_watch')->table($table)->where('environment_id', $environment_id)->count();
+    }
+
+    /**
+     * The name of the partition (`tableoid::regclass`) the row with the given id of a raw table is stored in.
+     */
+    public static function partitionOf(string $table, int $id): string
+    {
+        return (string) DB::connection('app_watch')->table($table)->where('id', $id)->value(DB::raw('tableoid::regclass::text'));
+    }
+
+    /**
      * Insert one request row recorded at the given time.
      *
      * @param  array<string, mixed>  $overrides
