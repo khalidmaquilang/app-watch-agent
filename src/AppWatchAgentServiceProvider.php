@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AppWatch\Agent;
 
 use AppWatch\Agent\Console\AgentCommand;
+use AppWatch\Agent\Console\InstallCommand;
 use AppWatch\Agent\Http\Middleware\StartRequestTraceMiddleware;
 use AppWatch\Agent\Listeners\FlushTraceListener;
 use AppWatch\Agent\Listeners\RecordCacheListener;
@@ -15,6 +16,7 @@ use AppWatch\Agent\Listeners\RecordOutgoingRequestListener;
 use AppWatch\Agent\Listeners\RecordQueryListener;
 use AppWatch\Agent\Listeners\RecordRequestListener;
 use AppWatch\Agent\Listeners\StartCommandTraceListener;
+use AppWatch\Agent\Storage\PartitionDdl;
 use AppWatch\Agent\Support\IgnoreRules;
 use AppWatch\Agent\Support\LogContextSanitizer;
 use AppWatch\Agent\Support\Sampler;
@@ -62,6 +64,7 @@ class AppWatchAgentServiceProvider extends ServiceProvider
         $this->app->singleton(TraceContext::class);
         $this->app->singleton(Recorder::class);
         $this->app->singleton(SqlNormalizer::class);
+        $this->app->singleton(PartitionDdl::class);
         $this->app->singleton(RecordJobListener::class);
         $this->app->singleton(RecordQueryListener::class);
         $this->app->singleton(RecordOutgoingRequestListener::class);
@@ -88,7 +91,7 @@ class AppWatchAgentServiceProvider extends ServiceProvider
                 __DIR__.'/../config/app-watch.php' => config_path('app-watch.php'),
             ], 'app-watch-config');
 
-            $this->commands([AgentCommand::class]);
+            $this->commands([AgentCommand::class, InstallCommand::class]);
         }
 
         if ((bool) config('app-watch.enabled', true)) {
