@@ -8,7 +8,6 @@ use AppWatch\Agent\Payloads\EventMetadata;
 use AppWatch\Agent\Payloads\OutgoingRequestEventPayload;
 use AppWatch\Agent\Recorder;
 use AppWatch\Agent\Support\TraceContext;
-use Illuminate\Contracts\Config\Repository;
 use Illuminate\Http\Client\Events\ConnectionFailed;
 use Illuminate\Http\Client\Events\RequestSending;
 use Illuminate\Http\Client\Events\ResponseReceived;
@@ -20,7 +19,7 @@ use Throwable;
  * Records the HTTP client requests of the current trace: RequestSending notes when a request
  * started, and ResponseReceived / ConnectionFailed record it. Only the method, target host, URL
  * without userinfo, query string or fragment, status and duration are recorded — never headers or
- * bodies. Requests outside a trace and requests to the configured monitor are not recorded.
+ * bodies. Requests outside a trace are not recorded.
  * Bound as a singleton, because the start times are kept between those events.
  */
 final class RecordOutgoingRequestListener
@@ -46,7 +45,6 @@ final class RecordOutgoingRequestListener
      * The agent services the listener uses.
      */
     public function __construct(
-        private readonly Repository $config,
         private readonly Recorder $recorder,
         private readonly TraceContext $trace_context,
     ) {}
@@ -57,7 +55,7 @@ final class RecordOutgoingRequestListener
     public function handleRequestSending(RequestSending $event): void
     {
         try {
-            if (! $this->shouldRecord($event->request)) {
+            if (! $this->shouldRecord()) {
                 return;
             }
 
@@ -108,7 +106,7 @@ final class RecordOutgoingRequestListener
             $duration_ms = $this->takeDurationMs($request) ?? $fallback_duration_ms ?? 0.0;
             $trace_id = $this->trace_context->traceId();
 
-            if ($trace_id === null || ! $this->shouldRecord($request)) {
+            if ($trace_id === null || ! $this->shouldRecord()) {
                 return;
             }
 
@@ -129,42 +127,13 @@ final class RecordOutgoingRequestListener
     }
 
     /**
-     * Whether the request is recorded: recording is on, a sampled trace is active and the request
-     * is not the agent's own traffic to the monitor.
+     * Whether the request is recorded: recording is on and a sampled trace is active.
      */
-    private function shouldRecord(Request $request): bool
+    private function shouldRecord(): bool
     {
         return $this->trace_context->isActive()
             && $this->trace_context->isSampled()
-            && $this->recorder->isEnabled()
-            && ! $this->isMonitorRequest($request->toPsrRequest()->getUri());
-    }
-
-    /**
-     * Whether the URI points at the configured `monitor_url` (same host and port, under its path).
-     */
-    private function isMonitorRequest(UriInterface $uri): bool
-    {
-        $monitor_url = $this->config->get('app-watch.monitor_url');
-
-        if (! is_string($monitor_url) || $monitor_url === '') {
-            return false;
-        }
-
-        $monitor = parse_url($monitor_url);
-
-        if (! is_array($monitor) || ! isset($monitor['host'])) {
-            return false;
-        }
-
-        $monitor_scheme = strtolower($monitor['scheme'] ?? 'https');
-        $monitor_port = $monitor['port'] ?? ($monitor_scheme === 'http' ? 80 : 443);
-        $request_port = $uri->getPort() ?? (strtolower($uri->getScheme()) === 'http' ? 80 : 443);
-        $monitor_path = rtrim($monitor['path'] ?? '', '/');
-
-        return strtolower($uri->getHost()) === strtolower(trim($monitor['host'], '[]'))
-            && $request_port === $monitor_port
-            && ($monitor_path === '' || $uri->getPath() === $monitor_path || str_starts_with($uri->getPath(), $monitor_path.'/'));
+            && $this->recorder->isEnabled();
     }
 
     /**

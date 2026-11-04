@@ -26,7 +26,7 @@ function loadAgentConfig(array $variables): array
 
 it('merges the default config', function (): void {
     expect(config('app-watch.enabled'))->toBeTrue()
-        ->and(config('app-watch.api_version'))->toBe('v1')
+        ->and(config()->has('app-watch.token'))->toBeFalse()
         ->and(Arr::except(config('app-watch.daemon'), 'spool_path'))->toBe(['host' => '127.0.0.1', 'port' => 2407, 'flush_events' => 500, 'flush_seconds' => 5, 'max_buffered_events' => 10000, 'spool_max_bytes' => 104857600])
         ->and((require __DIR__.'/../config/app-watch.php')['daemon']['spool_path'])->toBe(storage_path('app/app-watch/spool'))
         ->and(config('app-watch.sample_rates.exception'))->toBe(1.0)
@@ -121,7 +121,7 @@ it('publishes config/app-watch.php with the app-watch-config tag', function (): 
 
     expect(array_keys($published))->toBe([
         'enabled', 'environment_id', 'connection', 'database', 'retention_days', 'partitions_ahead_days', 'rollups', 'tables',
-        'token', 'monitor_url', 'api_version', 'daemon', 'sample_rates', 'ignore', 'log_level', 'deploy',
+        'daemon', 'sample_rates', 'ignore', 'log_level', 'deploy',
     ])
         ->and(array_keys($published['database']))->toBe(['host', 'port', 'database', 'username', 'password', 'sslmode'])
         ->and(array_keys($published['rollups']))->toBe(['grace_minutes', 'minute_retention_days', 'hour_retention_days'])

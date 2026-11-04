@@ -8,19 +8,19 @@ use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Config\Repository;
 
 /**
- * Holds the flushed events until the monitor takes them. A failed delivery is retried with
- * exponential backoff (1 s, 2 s, 4 s ... at most MAX_BACKOFF_SECONDS, or the monitor's
- * Retry-After). deliver() never sleeps: while backing off it returns at once, so the daemon keeps
- * reading from its socket.
+ * Holds the flushed events until the telemetry database takes them. A retryable failure (database
+ * down, timeout, deadlock ...) is retried with exponential backoff (1 s, 2 s, 4 s ... at most
+ * MAX_BACKOFF_SECONDS). deliver() never sleeps: while backing off it returns at once, so the
+ * daemon keeps reading from its socket.
  *
  * Memory is bounded by the disk spool: once SPOOL_AFTER_ATTEMPTS deliveries in a row have failed,
  * or more than `app-watch.daemon.max_buffered_events` are pending, the pending events are written
  * to the spool instead of being held in memory. Events the spool cannot take (disk full, directory
  * not writable) are dropped and counted. Spooled batches (including those left by an earlier run)
  * are replayed oldest first, one per deliver() call and only while nothing live is pending, so
- * live traffic is never starved; a failed replay backs off like any delivery, so the spooled
- * batch doubles as the retry while the app is idle. A batch is deleted once the monitor took it
- * or rejected it with 422 (poison).
+ * live traffic is never starved; a failed replay keeps the batch and backs off like any delivery,
+ * so the spooled batch doubles as the retry while the app is idle. A batch is deleted once every
+ * chunk of it was either written or rejected by the database as poison (SQLSTATE class 22/23).
  */
 final class Outbox
 {
@@ -43,11 +43,6 @@ final class Outbox
      * How long the final delivery attempt on shutdown may take, in seconds.
      */
     public const int SHUTDOWN_TIMEOUT_SECONDS = 3;
-
-    /**
-     * The status that marks a spooled batch as poison: it can never be accepted, so it is deleted.
-     */
-    public const int POISON_STATUS = 422;
 
     /**
      * The events waiting to be delivered, oldest first.
@@ -73,12 +68,6 @@ final class Outbox
     private bool $spool_may_have_batches = true;
 
     /**
-     * Whether replay is paused because the monitor rejected a spooled batch with a status other
-     * than 422 (401, 403, ...); it resumes after the monitor accepted a live delivery.
-     */
-    private bool $replay_paused = false;
-
-    /**
      * Events written to the spool.
      */
     private int $spooled_count = 0;
@@ -92,7 +81,7 @@ final class Outbox
      * The outbox's collaborators.
      */
     public function __construct(
-        private readonly IngestClient $client,
+        private readonly DatabaseWriter $writer,
         private readonly Spool $spool,
         private readonly Repository $config,
     ) {}
@@ -120,7 +109,7 @@ final class Outbox
      * pending, replay the oldest spooled batch. Returns the attempt's result, or null when
      * nothing was attempted.
      */
-    public function deliver(): ?IngestResult
+    public function deliver(): ?WriteResult
     {
         if ($this->isBackingOff()) {
             return null;
@@ -130,21 +119,22 @@ final class Outbox
             return $this->deliverPending();
         }
 
-        return $this->spool_may_have_batches && ! $this->replay_paused ? $this->replayOldest() : null;
+        return $this->spool_may_have_batches ? $this->replayOldest() : null;
     }
 
     /**
-     * The final delivery on shutdown: one attempt with a short timeout, whatever the backoff, and
+     * The final delivery on shutdown: one attempt with a SHUTDOWN_TIMEOUT_SECONDS statement
+     * timeout, whatever the backoff, and
      * every event it could not deliver goes to the spool. Returns the attempt's result, or null
      * when nothing was pending.
      */
-    public function flushForShutdown(): ?IngestResult
+    public function flushForShutdown(): ?WriteResult
     {
         if ($this->pending === []) {
             return null;
         }
 
-        $result = $this->client->send($this->pending, self::SHUTDOWN_TIMEOUT_SECONDS);
+        $result = $this->writer->send($this->pending, self::SHUTDOWN_TIMEOUT_SECONDS);
 
         $this->pending = $result->pending;
         $this->spoolPending();
@@ -213,11 +203,11 @@ final class Outbox
     }
 
     /**
-     * Post the pending events; spool them once SPOOL_AFTER_ATTEMPTS deliveries in a row failed.
+     * Write the pending events; spool them once SPOOL_AFTER_ATTEMPTS deliveries in a row failed.
      */
-    private function deliverPending(): IngestResult
+    private function deliverPending(): WriteResult
     {
-        $result = $this->client->send($this->pending);
+        $result = $this->writer->send($this->pending);
 
         $this->pending = $result->pending;
         $this->recordAttempt($result);
@@ -230,12 +220,11 @@ final class Outbox
     }
 
     /**
-     * Post the oldest spooled batch. It is deleted once delivered or rejected as poison (422);
-     * the undelivered rest of a partly delivered batch is written back in its place. Any other
-     * rejection (401, 403, ...) keeps the batch and pauses replay until a live delivery succeeds,
-     * so a bad token never wipes the spool.
+     * Write the oldest spooled batch. It is deleted once nothing of it is left to retry (every
+     * chunk written or dropped as poison); when a retryable failure stopped it part-way, only the
+     * unwritten rest is written back in its place, and replay backs off like any delivery.
      */
-    private function replayOldest(): ?IngestResult
+    private function replayOldest(): ?WriteResult
     {
         $batch = $this->spool->oldest();
 
@@ -245,42 +234,33 @@ final class Outbox
             return null;
         }
 
-        $result = $this->client->send($batch->events);
+        $result = $this->writer->send($batch->events);
 
         $this->recordAttempt($result);
 
-        if ($result->shouldRetry()) {
-            if ($result->delivered_count > 0 || $result->rejected_count > 0) {
-                $this->spool->replace($batch->path, $result->pending);
-            }
-        } elseif ($result->rejected_status !== null && $result->rejected_status !== self::POISON_STATUS) {
-            $this->replay_paused = true;
-        } else {
+        if (! $result->shouldRetry()) {
             $this->spool->delete($batch->path);
+        } elseif (count($result->pending) < count($batch->events)) {
+            $this->spool->replace($batch->path, $result->pending);
         }
 
         return $result->forSpoolFile($batch->path);
     }
 
     /**
-     * Update the backoff after a delivery attempt, and resume a paused replay once the monitor
-     * accepted events again.
+     * Update the backoff after a delivery attempt.
      */
-    private function recordAttempt(IngestResult $result): void
+    private function recordAttempt(WriteResult $result): void
     {
         if ($result->shouldRetry()) {
             $this->failed_attempts++;
-            $this->next_attempt_at = CarbonImmutable::now()->addSeconds($this->backoffSeconds($result));
+            $this->next_attempt_at = CarbonImmutable::now()->addSeconds($this->backoffSeconds());
 
             return;
         }
 
         $this->failed_attempts = 0;
         $this->next_attempt_at = null;
-
-        if ($result->delivered_count > 0) {
-            $this->replay_paused = false;
-        }
     }
 
     /**
@@ -305,15 +285,10 @@ final class Outbox
     }
 
     /**
-     * The wait before the next attempt: the monitor's Retry-After when it sent one, otherwise
-     * 2^(failures - 1) seconds, at most MAX_BACKOFF_SECONDS.
+     * The wait before the next attempt: 2^(failures - 1) seconds, at most MAX_BACKOFF_SECONDS.
      */
-    private function backoffSeconds(IngestResult $result): int
+    private function backoffSeconds(): int
     {
-        if ($result->retry_after_seconds !== null) {
-            return max(1, $result->retry_after_seconds);
-        }
-
         return min(self::MAX_BACKOFF_SECONDS, 2 ** min($this->failed_attempts - 1, 6));
     }
 }

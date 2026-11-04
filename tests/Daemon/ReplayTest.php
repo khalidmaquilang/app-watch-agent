@@ -5,43 +5,48 @@ declare(strict_types=1);
 use AppWatch\Agent\Daemon\Outbox;
 use AppWatch\Agent\Daemon\Spool;
 use Carbon\CarbonImmutable;
-use Illuminate\Http\Client\ConnectionException;
-use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 
 beforeEach(function (): void {
-    configureMonitor();
-    CarbonImmutable::setTestNow('2026-11-03 05:41:00');
-    Http::preventStrayRequests();
+    prepareTelemetryDatabase();
 
     $this->spool = app(Spool::class);
 });
 
 afterEach(function (): void {
+    restoreTelemetryConnection();
+    dropTelemetrySchema();
     CarbonImmutable::setTestNow();
+    Carbon::setTestNow();
 });
 
 /**
- * Three distinguishable batches of events.
+ * Three distinguishable batches of request events.
  *
  * @return array<int, array<int, array<string, mixed>>>
  */
 function replayBatches(): array
 {
-    return [daemonEvents(1), daemonEvents(2), [fixtureEvent('log'), fixtureEvent('query')]];
+    return [
+        [[...fixtureEvent('request'), 'path' => '/a/1']],
+        [[...fixtureEvent('request'), 'path' => '/b/1'], [...fixtureEvent('request'), 'path' => '/b/2']],
+        [[...fixtureEvent('request'), 'path' => '/c/1']],
+    ];
 }
 
 /**
- * The events of every ingest request sent so far, one array per request.
+ * The paths of the given batches, in order.
  *
- * @return array<int, array<int, array<string, mixed>>>
+ * @param  array<int, array<int, array<string, mixed>>>  $batches
+ * @return array<int, string>
  */
-function postedBatches(): array
+function replayPaths(array $batches): array
 {
-    return Http::recorded()->map(fn (array $pair): array => ingestBatch($pair[0])['events'])->values()->all();
+    return array_column(array_merge(...$batches), 'path');
 }
 
-it('replays spooled batches oldest first, one per delivery, deleting each after a 2xx', function (): void {
-    Http::fake(['monitor.test/*' => Http::response(['accepted' => 1], 202)]);
+it('replays spooled batches oldest first, one per delivery, deleting each once written', function (): void {
     $batches = replayBatches();
 
     foreach ($batches as $batch) {
@@ -54,7 +59,7 @@ it('replays spooled batches oldest first, one per delivery, deleting each after 
     $first = $outbox->deliver();
 
     expect($first?->spool_file)->toBe($files[0])
-        ->and($first?->delivered_count)->toBe(1)
+        ->and($first?->stored_count)->toBe(1)
         ->and($this->spool->files())->toBe([$files[1], $files[2]]);
 
     $outbox->deliver();
@@ -65,18 +70,39 @@ it('replays spooled batches oldest first, one per delivery, deleting each after 
 
     expect($this->spool->files())->toBe([])
         ->and($outbox->deliver())->toBeNull()
-        ->and(postedBatches())->toBe($batches);
+        ->and(storedRequestPaths())->toBe(replayPaths($batches));
 });
 
-it('replays the spool once the monitor is reachable again, with the original payloads', function (): void {
-    $reachable = false;
-    Http::fake(function () use (&$reachable) {
-        if (! $reachable) {
-            throw new ConnectionException('Connection refused');
-        }
+it('spools after three failed attempts while the database is down, then replays the spool and deletes the files once it is back', function (): void {
+    breakTelemetryConnection();
+    $outbox = app(Outbox::class);
+    $batch = replayBatches()[1];
+    $outbox->push($batch);
 
-        return Http::response(['accepted' => 1], 202);
-    });
+    for ($attempt = 1; $attempt <= Outbox::SPOOL_AFTER_ATTEMPTS; $attempt++) {
+        expect($outbox->deliver()?->shouldRetry())->toBeTrue()
+            ->and($outbox->nextAttemptAt()?->isFuture())->toBeTrue();
+
+        CarbonImmutable::setTestNow($outbox->nextAttemptAt());
+    }
+
+    restoreTelemetryConnection();
+
+    expect($outbox->pending())->toBe([])
+        ->and(spooledBatches())->toBe([$batch])
+        ->and(storedRequestPaths())->toBe([]);
+
+    // While the app is idle, the oldest spooled batch is the retry.
+    $result = $outbox->deliver();
+
+    expect($result?->stored_count)->toBe(2)
+        ->and($result?->spool_file)->not->toBeNull()
+        ->and($this->spool->files())->toBe([])
+        ->and(storedRequestPaths())->toBe(['/b/1', '/b/2']);
+});
+
+it('replays every batch spooled while the database was down, with the original payloads', function (): void {
+    breakTelemetryConnection();
     $outbox = app(Outbox::class);
     $batches = replayBatches();
 
@@ -91,39 +117,34 @@ it('replays the spool once the monitor is reachable again, with the original pay
 
     expect(spooledBatches())->toBe($batches);
 
-    $failed_attempts = Http::recorded()->count();
-    $reachable = true;
+    restoreTelemetryConnection();
     CarbonImmutable::setTestNow($outbox->nextAttemptAt());
 
-    // While the app is idle, the oldest spooled batch is the retry.
     for ($tick = 0; $tick < 5; $tick++) {
         $outbox->deliver();
     }
 
     expect($this->spool->files())->toBe([])
-        ->and(array_slice(postedBatches(), $failed_attempts))->toBe($batches);
+        ->and(storedRequestPaths())->toBe(replayPaths($batches));
 });
 
-it('delivers live events before spooled ones, so live traffic is not starved', function (): void {
-    Http::fake(['monitor.test/*' => Http::response(status: 202)]);
+it('writes live events before spooled ones, so live traffic is not starved', function (): void {
     $this->spool->write(replayBatches()[0]);
     $this->spool->write(replayBatches()[1]);
     $outbox = app(Outbox::class);
-    $live = [fixtureEvent('job')];
 
-    $outbox->push($live);
+    $outbox->push([[...fixtureEvent('request'), 'path' => '/live/1']]);
     $outbox->deliver();
-    $outbox->push($live);
+    $outbox->push([[...fixtureEvent('request'), 'path' => '/live/2']]);
     $outbox->deliver();
     $outbox->deliver();
     $outbox->deliver();
 
-    expect(postedBatches())->toBe([$live, $live, replayBatches()[0], replayBatches()[1]])
+    expect(storedRequestPaths())->toBe(['/live/1', '/live/2', '/a/1', '/b/1', '/b/2'])
         ->and($this->spool->files())->toBe([]);
 });
 
 it('replays the files left by an earlier run on startup', function (): void {
-    Http::fake(['monitor.test/*' => Http::response(status: 202)]);
     $batches = replayBatches();
 
     foreach ($batches as $batch) {
@@ -136,14 +157,12 @@ it('replays the files left by an earlier run on startup', function (): void {
         $outbox->deliver();
     }
 
-    expect(postedBatches())->toBe($batches)
+    expect(storedRequestPaths())->toBe(replayPaths($batches))
         ->and($this->spool->files())->toBe([]);
 });
 
 it('keeps a spooled batch and backs off when its replay fails', function (): void {
-    Http::fakeSequence('monitor.test/*')
-        ->push(status: 503)
-        ->push(status: 202);
+    breakTelemetryConnection();
     $this->spool->write(replayBatches()[0]);
     $file = $this->spool->files()[0];
     $outbox = app(Outbox::class);
@@ -153,72 +172,86 @@ it('keeps a spooled batch and backs off when its replay fails', function (): voi
     expect($result?->shouldRetry())->toBeTrue()
         ->and($result?->spool_file)->toBe($file)
         ->and($this->spool->files())->toBe([$file])
+        ->and(spooledBatches())->toBe([replayBatches()[0]])
         ->and($outbox->isBackingOff())->toBeTrue()
         ->and($outbox->deliver())->toBeNull();
 
+    restoreTelemetryConnection();
     CarbonImmutable::setTestNow('2026-11-03 05:41:01');
 
-    expect($outbox->deliver()?->delivered_count)->toBe(1)
+    expect($outbox->deliver()?->stored_count)->toBe(1)
         ->and($this->spool->files())->toBe([]);
 });
 
-it('writes back only the undelivered rest of a partly delivered spooled batch', function (): void {
-    Http::fakeSequence('monitor.test/*')
-        ->push(status: 202)
-        ->push(status: 503);
+it('writes back only the unwritten rest of a partly written spooled batch', function (): void {
     $events = daemonEvents(1500);
+    $events[1200] = [...$events[1200], 'path' => '/deadlock'];
+    DB::connection('app_watch')->unprepared(<<<'SQL'
+        CREATE OR REPLACE FUNCTION app_watch_test_fail_insert() RETURNS trigger AS $$
+        BEGIN
+            IF NEW.path = '/deadlock' THEN
+                RAISE EXCEPTION 'deadlock' USING ERRCODE = '40P01';
+            END IF;
+            RETURN NEW;
+        END
+        $$ LANGUAGE plpgsql;
+        CREATE TRIGGER app_watch_test_fail_insert BEFORE INSERT ON requests FOR EACH ROW EXECUTE FUNCTION app_watch_test_fail_insert();
+        SQL);
     $this->spool->write($events);
     $file = $this->spool->files()[0];
 
     $result = app(Outbox::class)->deliver();
 
-    expect($result?->delivered_count)->toBe(1000)
+    expect($result?->stored_count)->toBe(1000)
+        ->and($result?->shouldRetry())->toBeTrue()
         ->and($this->spool->files())->toBe([$file])
         ->and(spooledBatches())->toBe([array_slice($events, 1000)]);
 });
 
-it('deletes a spooled batch the monitor rejects with 422 and goes on with the next', function (): void {
-    Http::fakeSequence('monitor.test/*')
-        ->push(['message' => 'invalid'], 422)
-        ->push(status: 202);
-    $this->spool->write(replayBatches()[0]);
+it('deletes a spooled batch the database rejects as poison and goes on with the next', function (): void {
+    $this->spool->write([[...fixtureEvent('request'), 'path' => '/poison']]);
     $this->spool->write(replayBatches()[1]);
+    DB::connection('app_watch')->unprepared(<<<'SQL'
+        CREATE OR REPLACE FUNCTION app_watch_test_fail_insert() RETURNS trigger AS $$
+        BEGIN
+            IF NEW.path = '/poison' THEN
+                RAISE EXCEPTION 'bad row' USING ERRCODE = '22P02';
+            END IF;
+            RETURN NEW;
+        END
+        $$ LANGUAGE plpgsql;
+        CREATE TRIGGER app_watch_test_fail_insert BEFORE INSERT ON requests FOR EACH ROW EXECUTE FUNCTION app_watch_test_fail_insert();
+        SQL);
     $outbox = app(Outbox::class);
 
     $poisoned = $outbox->deliver();
 
-    expect($poisoned?->rejected_status)->toBe(422)
+    expect($poisoned?->poison_count)->toBe(1)
+        ->and($poisoned?->poison_sqlstate)->toBe('22P02')
         ->and($poisoned?->spool_file)->not->toBeNull()
         ->and(spooledBatches())->toBe([replayBatches()[1]])
         ->and($outbox->isBackingOff())->toBeFalse();
 
     $outbox->deliver();
 
-    expect($this->spool->files())->toBe([]);
+    expect($this->spool->files())->toBe([])
+        ->and(storedRequestPaths())->toBe(['/b/1', '/b/2']);
 });
 
-it('keeps spooled batches and pauses replay when the monitor rejects one with 401, until a live delivery succeeds', function (): void {
-    Http::fakeSequence('monitor.test/*')
-        ->push(status: 401)
-        ->push(status: 202)
-        ->push(status: 202);
-    $this->spool->write(replayBatches()[0]);
+it('deletes a spooled batch whose recorded_at day has no partition', function (): void {
+    DB::connection('app_watch')->statement('DROP TABLE requests_p20261104');
+    $this->spool->write([[...fixtureEvent('request'), 'recorded_at' => '2026-11-04T10:00:00.000000+00:00']]);
     $outbox = app(Outbox::class);
 
-    expect($outbox->deliver()?->rejected_status)->toBe(401)
-        ->and($outbox->deliver())->toBeNull()
-        ->and(spooledBatches())->toBe([replayBatches()[0]]);
+    $result = $outbox->deliver();
 
-    $outbox->push([fixtureEvent('job')]);
-    $outbox->deliver();
-    $outbox->deliver();
-
-    expect($this->spool->files())->toBe([]);
-    Http::assertSentCount(3);
+    expect($result?->poison_count)->toBe(1)
+        ->and($result?->isMissingPartition())->toBeTrue()
+        ->and($this->spool->files())->toBe([])
+        ->and($outbox->isBackingOff())->toBeFalse();
 });
 
 it('removes a corrupt spool file without blocking the replay of the others', function (): void {
-    Http::fake(['monitor.test/*' => Http::response(status: 202)]);
     mkdir($this->spool_path, 0o755, true);
     file_put_contents($this->spool_path.'/00000000000000000001-corrupt.json.gz', 'truncated gzip');
     $this->spool->write(replayBatches()[0]);
@@ -228,13 +261,12 @@ it('removes a corrupt spool file without blocking the replay of the others', fun
     $outbox->deliver();
     $outbox->deliver();
 
-    expect(postedBatches())->toBe([replayBatches()[0], replayBatches()[1]])
+    expect(storedRequestPaths())->toBe(['/a/1', '/b/1', '/b/2'])
         ->and($this->spool->files())->toBe([])
         ->and($outbox->spool()->corruptCount())->toBe(1);
 });
 
 it('does not scan an empty spool again until something is spooled', function (): void {
-    Http::fake(['monitor.test/*' => Http::response(status: 202)]);
     $outbox = app(Outbox::class);
 
     expect($outbox->deliver())->toBeNull();
@@ -250,5 +282,5 @@ it('does not scan an empty spool again until something is spooled', function ():
     $outbox->deliver();
     $outbox->deliver();
 
-    expect(postedBatches())->toBe([replayBatches()[0], replayBatches()[1]]);
+    expect(storedRequestPaths())->toBe(['/a/1', '/b/1', '/b/2']);
 });

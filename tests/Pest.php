@@ -16,8 +16,9 @@ use AppWatch\Agent\Recorder;
 use AppWatch\Agent\Tests\TestCase;
 use AppWatch\Agent\Transport\FakeTransport;
 use AppWatch\Agent\Transport\Transport;
+use Carbon\CarbonImmutable;
 use Illuminate\Database\Events\QueryExecuted;
-use Illuminate\Http\Client\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -201,30 +202,59 @@ function daemonEvents(int $count): array
 }
 
 /**
- * The batch an ingest request carried: its gzip body, decoded.
- *
- * @return array<string, mixed>
+ * Install the telemetry schema with the test clock frozen at the fixture's day, so the daemon can
+ * write the fixture events (recorded 2026-11-03 05:41) into their partitions.
  */
-function ingestBatch(Request $request): array
+function prepareTelemetryDatabase(string $now = '2026-11-03 05:41:00'): void
 {
-    $json = gzdecode($request->body());
-
-    if ($json === false) {
-        throw new RuntimeException('The ingest request body is not gzip.');
-    }
-
-    return json_decode($json, true, flags: JSON_THROW_ON_ERROR);
+    CarbonImmutable::setTestNow($now);
+    Carbon::setTestNow($now);
+    installTelemetrySchema();
 }
 
 /**
- * Configure a token and monitor URL so the daemon can deliver.
+ * Point the `app_watch` connection at port 1, where nothing listens, so every write fails with a
+ * connection error (SQLSTATE 08006).
  */
-function configureMonitor(): void
+function breakTelemetryConnection(): void
 {
-    config([
-        'app-watch.token' => 'aw_test_token',
-        'app-watch.monitor_url' => 'https://monitor.test',
-    ]);
+    config(['database.connections.app_watch.port' => 1]);
+    DB::purge('app_watch');
+}
+
+/**
+ * Point the `app_watch` connection back at the real test database.
+ */
+function restoreTelemetryConnection(): void
+{
+    config(['database.connections.app_watch.port' => (int) env('APP_WATCH_DB_PORT', 5432)]);
+    DB::purge('app_watch');
+}
+
+/**
+ * Make every insert into the given raw table fail with the given SQLSTATE (a BEFORE INSERT trigger
+ * raising it), so the daemon's classification can be exercised against the real database.
+ */
+function failTelemetryInsertsWith(string $sqlstate, string $table = 'requests'): void
+{
+    DB::connection('app_watch')->unprepared(<<<SQL
+        CREATE OR REPLACE FUNCTION app_watch_test_fail_insert() RETURNS trigger AS \$\$
+        BEGIN
+            RAISE EXCEPTION 'forced test failure' USING ERRCODE = '{$sqlstate}';
+        END
+        \$\$ LANGUAGE plpgsql;
+        CREATE TRIGGER app_watch_test_fail_insert BEFORE INSERT ON {$table} FOR EACH ROW EXECUTE FUNCTION app_watch_test_fail_insert();
+        SQL);
+}
+
+/**
+ * The paths of the stored request rows, in insert order.
+ *
+ * @return array<int, string>
+ */
+function storedRequestPaths(): array
+{
+    return DB::connection('app_watch')->table('requests')->orderBy('id')->pluck('path')->all();
 }
 
 /**

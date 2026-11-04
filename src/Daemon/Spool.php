@@ -10,7 +10,7 @@ use Illuminate\Support\Str;
 use JsonException;
 
 /**
- * Keeps batches the monitor could not take on disk until it can: each batch is one gzipped JSON
+ * Keeps batches the telemetry database could not take on disk until it can: each batch is one gzipped JSON
  * list of events in `app-watch.daemon.spool_path`, named "{timestamp}-{uuid}.json.gz" so names
  * sort oldest first. The spool never grows past `app-watch.daemon.spool_max_bytes`: the oldest
  * files are deleted (and their events counted as dropped) to make room. Files are written to a

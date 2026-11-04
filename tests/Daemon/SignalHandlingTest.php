@@ -6,30 +6,27 @@ use AppWatch\Agent\Daemon\Batcher;
 use AppWatch\Agent\Daemon\Daemon;
 use AppWatch\Agent\Daemon\Outbox;
 use Carbon\CarbonImmutable;
-use Illuminate\Http\Client\ConnectionException;
-use Illuminate\Http\Client\Request;
-use Illuminate\Support\Facades\Http;
+use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 
 beforeEach(function (): void {
-    configureMonitor();
+    prepareTelemetryDatabase();
     config(['app-watch.daemon.port' => unusedPort(), 'app-watch.daemon.flush_seconds' => 60]);
-    Http::preventStrayRequests();
 
     $this->batcher = app(Batcher::class);
     app()->instance(Batcher::class, $this->batcher);
 });
 
 afterEach(function (): void {
+    restoreTelemetryConnection();
+    dropTelemetrySchema();
     CarbonImmutable::setTestNow();
+    Carbon::setTestNow();
 });
 
 it('makes one final delivery attempt on shutdown and spools the buffered events when it fails', function (): void {
-    $posted = [];
-    Http::fake(function (Request $request) use (&$posted): never {
-        $posted[] = ingestBatch($request)['events'];
-
-        throw new ConnectionException('Connection refused');
-    });
+    breakTelemetryConnection();
     $events = daemonEvents(10);
 
     foreach ($events as $event) {
@@ -45,42 +42,54 @@ it('makes one final delivery attempt on shutdown and spools the buffered events 
         ->and($daemon->address())->toBeNull()
         ->and($this->batcher->count())->toBe(0)
         ->and($daemon->outbox()->pending())->toBe([])
-        ->and(spooledBatches())->toBe([$events])
-        ->and($posted)->toBe([$events]);
+        ->and($result?->pending)->toBe($events)
+        ->and(spooledBatches())->toBe([$events]);
+});
+
+it('uses the shutdown statement timeout for the final attempt', function (): void {
+    $statements = [];
+    DB::connection('app_watch')->listen(function (QueryExecuted $query) use (&$statements): void {
+        if (str_starts_with($query->sql, 'SET LOCAL statement_timeout')) {
+            $statements[] = $query->sql;
+        }
+    });
+
+    foreach (daemonEvents(2) as $event) {
+        $this->batcher->add($event);
+    }
+
+    app(Daemon::class)->shutdown();
+
+    expect($statements)->toBe(['SET LOCAL statement_timeout = '.(Outbox::SHUTDOWN_TIMEOUT_SECONDS * 1000)]);
 });
 
 it('spools nothing when the final delivery attempt succeeds', function (): void {
-    Http::fake(['monitor.test/*' => Http::response(status: 202)]);
-
     foreach (daemonEvents(10) as $event) {
         $this->batcher->add($event);
     }
 
     $daemon = app(Daemon::class);
 
-    expect($daemon->shutdown()?->delivered_count)->toBe(10)
-        ->and(spooledBatches())->toBe([]);
-
-    Http::assertSentCount(1);
+    expect($daemon->shutdown()?->stored_count)->toBe(10)
+        ->and(spooledBatches())->toBe([])
+        ->and(storedRequestPaths())->toBe(array_column(daemonEvents(10), 'path'));
 });
 
 it('makes the final attempt even while a failed delivery is backing off', function (): void {
-    CarbonImmutable::setTestNow('2026-11-03 05:41:00');
-    Http::fakeSequence('monitor.test/*')
-        ->push(status: 503)
-        ->push(status: 202);
+    breakTelemetryConnection();
     $daemon = app(Daemon::class);
     $daemon->outbox()->push(daemonEvents(2));
     $daemon->outbox()->deliver();
 
-    expect($daemon->outbox()->isBackingOff())->toBeTrue()
-        ->and($daemon->shutdown()?->delivered_count)->toBe(2);
+    expect($daemon->outbox()->isBackingOff())->toBeTrue();
 
-    Http::assertSentCount(2);
+    restoreTelemetryConnection();
+
+    expect($daemon->shutdown()?->stored_count)->toBe(2)
+        ->and(storedRequestPaths())->toBe(['/orders/1', '/orders/2']);
 });
 
 it('takes in what open connections already sent before the final attempt', function (): void {
-    Http::fake(['monitor.test/*' => Http::response(status: 202)]);
     $daemon = app(Daemon::class);
     $daemon->listen('127.0.0.1', 0);
     $client = stream_socket_client("tcp://{$daemon->address()}", $error_code, $error_message, 1.0);
@@ -96,28 +105,20 @@ it('takes in what open connections already sent before the final attempt', funct
     $result = $daemon->shutdown();
     fclose($client);
 
-    expect($result?->delivered_count)->toBe(2)
-        ->and($daemon->connectionCount())->toBe(0);
-    Http::assertSent(fn (Request $request): bool => ingestBatch($request)['events'] === [fixtureEvent('log'), fixtureEvent('job')]);
+    expect($result?->stored_count)->toBe(2)
+        ->and($daemon->connectionCount())->toBe(0)
+        ->and(telemetryRowCounts())->toMatchArray(['logs' => 1, 'job_runs' => 1]);
 });
 
 it('does nothing on shutdown when nothing is buffered', function (): void {
-    Http::fake();
-
-    expect(app(Daemon::class)->shutdown())->toBeNull();
-
-    Http::assertNothingSent();
+    expect(app(Daemon::class)->shutdown())->toBeNull()
+        ->and(telemetryRowCounts())->each->toBe(0);
 });
 
 it('flushes, spools what could not be sent and exits 0 on a signal', function (int $signal): void {
     $outbox = app(Outbox::class);
     app()->instance(Outbox::class, $outbox);
-    $attempts = 0;
-    Http::fake(function () use (&$attempts): never {
-        $attempts++;
-
-        throw new ConnectionException('Connection refused');
-    });
+    breakTelemetryConnection();
     $events = daemonEvents(10);
 
     foreach ($events as $event) {
@@ -132,8 +133,7 @@ it('flushes, spools what could not be sent and exits 0 on a signal', function (i
         ->expectsOutputToContain('Spooled 10 events to')
         ->assertExitCode(0);
 
-    expect($attempts)->toBe(1)
-        ->and(spooledBatches())->toBe([$events]);
+    expect(spooledBatches())->toBe([$events]);
 })->with([
     'SIGTERM' => [SIGTERM],
     'SIGINT' => [SIGINT],

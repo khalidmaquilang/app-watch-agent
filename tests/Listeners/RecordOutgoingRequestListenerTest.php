@@ -11,10 +11,7 @@ use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 
 beforeEach(function (): void {
-    config([
-        'app-watch.enabled' => true,
-        'app-watch.monitor_url' => 'https://monitor.example.com',
-    ]);
+    config(['app-watch.enabled' => true]);
 
     $this->recorder = app(Recorder::class);
     $this->trace_context = app(TraceContext::class);
@@ -98,33 +95,6 @@ it('records a 5xx response as failed and a 4xx response as not failed', function
     '503' => [503, true],
     '500' => [500, true],
     '404' => [404, false],
-]);
-
-it('does not record requests to the monitor', function (string $monitor_url, string $request_url): void {
-    config(['app-watch.monitor_url' => $monitor_url]);
-    Http::fake(['*' => Http::response('', 202)]);
-
-    Http::post($request_url, ['events' => []]);
-
-    expect(flushedOutgoingRequestEvents($this->trace_id))->toBe([]);
-})->with([
-    'the ingest endpoint' => ['https://monitor.example.com', 'https://monitor.example.com/api/v1/ingest'],
-    'a trailing slash and another host case' => ['https://monitor.example.com/', 'https://MONITOR.example.com/api/v1/ingest'],
-    'a monitor under a path' => ['https://example.com/app-watch', 'https://example.com/app-watch/api/v1/ingest'],
-    'an explicit default port' => ['https://monitor.example.com:443', 'https://monitor.example.com/api/v1/ingest'],
-]);
-
-it('records requests that only look like the monitor', function (string $request_url): void {
-    config(['app-watch.monitor_url' => 'https://example.com/app-watch']);
-    Http::fake(['*' => Http::response('', 200)]);
-
-    Http::get($request_url);
-
-    expect(flushedOutgoingRequestEvents($this->trace_id))->toHaveCount(1);
-})->with([
-    'another path' => ['https://example.com/app-watcher/items'],
-    'another port' => ['https://example.com:8443/app-watch/items'],
-    'another host' => ['https://api.example.com/app-watch/items'],
 ]);
 
 it('records nothing outside a trace', function (): void {

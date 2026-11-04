@@ -5,15 +5,16 @@ declare(strict_types=1);
 namespace AppWatch\Agent\Console;
 
 use AppWatch\Agent\Daemon\Daemon;
-use AppWatch\Agent\Daemon\IngestResult;
 use AppWatch\Agent\Daemon\Outbox;
+use AppWatch\Agent\Daemon\WriteResult;
+use AppWatch\Agent\Support\AgentConfiguration;
 use Illuminate\Console\Command;
 use Illuminate\Contracts\Config\Repository;
 use RuntimeException;
 
 /**
- * Runs the agent daemon: receives the events app processes send over TCP and forwards them in
- * batches to the App Watch monitor. On SIGTERM or SIGINT it stops accepting, makes one final
+ * Runs the agent daemon: receives the events app processes send over TCP and writes them in
+ * batches to the telemetry database. On SIGTERM or SIGINT it stops accepting, makes one final
  * delivery attempt, spools what could not be sent and exits 0. Without the pcntl extension it
  * runs without signal handling.
  */
@@ -32,15 +33,15 @@ final class AgentCommand extends Command
      *
      * @var string
      */
-    protected $description = 'Run the App Watch agent daemon that forwards recorded events to the monitor';
+    protected $description = 'Run the App Watch agent daemon that writes recorded events to the telemetry database';
 
     /**
-     * HTTP statuses already reported as rejections since the last successful delivery, so a bad
-     * token or payload is logged once instead of on every batch.
+     * SQLSTATEs already reported as rejections since the last successful write, so a bad payload
+     * or a missing partition is logged once instead of on every batch.
      *
-     * @var array<int, true>
+     * @var array<string, true>
      */
-    private array $reported_statuses = [];
+    private array $reported_sqlstates = [];
 
     /**
      * Outbox drops already reported.
@@ -70,19 +71,10 @@ final class AgentCommand extends Command
     /**
      * Check the configuration, listen, and run the loop.
      */
-    public function handle(Repository $config, Daemon $daemon): int
+    public function handle(Repository $config, AgentConfiguration $agent_configuration, Daemon $daemon): int
     {
-        $token = $config->get('app-watch.token');
-        $monitor_url = $config->get('app-watch.monitor_url');
-
-        if (! is_string($token) || $token === '') {
-            $this->writeError('APP_WATCH_TOKEN is not set. The agent daemon needs the environment token issued by the App Watch monitor.');
-
-            return self::FAILURE;
-        }
-
-        if (! is_string($monitor_url) || $monitor_url === '') {
-            $this->writeError('APP_WATCH_URL is not set. The agent daemon needs the App Watch monitor URL.');
+        if (! $agent_configuration->isConfigured()) {
+            $this->writeError($this->notConfiguredMessage($config, $agent_configuration));
 
             return self::FAILURE;
         }
@@ -136,6 +128,25 @@ final class AgentCommand extends Command
     }
 
     /**
+     * Why the agent is not configured: disabled, no environment id, or no telemetry connection.
+     */
+    private function notConfiguredMessage(Repository $config, AgentConfiguration $agent_configuration): string
+    {
+        if (! (bool) $config->get('app-watch.enabled', true)) {
+            return 'App Watch is disabled (APP_WATCH_ENABLED=false); the agent daemon does not start.';
+        }
+
+        if ($agent_configuration->environmentId() === null) {
+            return 'APP_WATCH_ENVIRONMENT_ID is not set. The agent daemon needs the environment id shown on the App Watch Settings -> Environments page.';
+        }
+
+        $connection = $config->get('app-watch.connection');
+        $name = is_string($connection) && $connection !== '' ? $connection : 'app_watch';
+
+        return "The telemetry database connection \"{$name}\" is not configured. Set APP_WATCH_DB_HOST, APP_WATCH_DB_PORT, APP_WATCH_DB_DATABASE, APP_WATCH_DB_USERNAME and APP_WATCH_DB_PASSWORD (or point APP_WATCH_DB_CONNECTION at an existing connection).";
+    }
+
+    /**
      * Handle SIGTERM and SIGINT asynchronously; false (with a warning) when pcntl is unavailable.
      */
     private function registerSignalHandlers(): bool
@@ -167,11 +178,11 @@ final class AgentCommand extends Command
     }
 
     /**
-     * Write a delivery attempt's problems to STDERR: each rejection status once until a batch is
-     * delivered again, every poisoned spool file, every retry, and newly spooled, evicted, corrupt
+     * Write a delivery attempt's problems to STDERR: each rejection SQLSTATE once until a batch is
+     * written again, every poisoned spool file, every retry, and newly spooled, evicted, corrupt
      * and dropped events.
      */
-    private function report(?IngestResult $result, Outbox $outbox): void
+    private function report(?WriteResult $result, Outbox $outbox): void
     {
         if ($result !== null) {
             $this->reportResult($result, $outbox);
@@ -181,7 +192,7 @@ final class AgentCommand extends Command
         $spooled_count = $outbox->spooledCount();
 
         if ($spooled_count > $this->reported_spooled_count) {
-            $this->writeError('Spooled '.($spooled_count - $this->reported_spooled_count)." events to {$spool->path()} until the monitor can take them.");
+            $this->writeError('Spooled '.($spooled_count - $this->reported_spooled_count)." events to {$spool->path()} until the database can take them.");
             $this->reported_spooled_count = $spooled_count;
         }
 
@@ -208,27 +219,37 @@ final class AgentCommand extends Command
     }
 
     /**
-     * Write one delivery attempt's rejections and retries to STDERR.
+     * Write one delivery attempt's rejections and retries to STDERR. A rejection names the
+     * SQLSTATE only, never the query, its data or the connection credentials.
      */
-    private function reportResult(IngestResult $result, Outbox $outbox): void
+    private function reportResult(WriteResult $result, Outbox $outbox): void
     {
-        if ($result->delivered_count > 0) {
-            $this->reported_statuses = [];
+        if ($result->stored_count > 0) {
+            $this->reported_sqlstates = [];
         }
 
-        if ($result->spool_file !== null && $result->rejected_status === Outbox::POISON_STATUS) {
-            $this->writeError('Deleted spooled batch '.basename($result->spool_file).": the monitor rejected its {$result->rejected_count} events with HTTP 422.");
-        } elseif ($result->rejected_status !== null && ! isset($this->reported_statuses[$result->rejected_status])) {
-            $this->reported_statuses[$result->rejected_status] = true;
-            $this->writeError($result->spool_file === null
-                ? "The monitor rejected {$result->rejected_count} events with HTTP {$result->rejected_status}; they were dropped. Check APP_WATCH_TOKEN and the agent version."
-                : 'The monitor rejected spooled batch '.basename($result->spool_file)." with HTTP {$result->rejected_status}; it is kept and replay pauses until a delivery succeeds. Check APP_WATCH_TOKEN and the agent version.");
+        if ($result->isPoison()) {
+            $sqlstate = $result->poison_sqlstate ?? 'unknown';
+            $deleted_spool_file = $result->spool_file !== null && ! $result->shouldRetry();
+            $first_report = ! isset($this->reported_sqlstates[$sqlstate]);
+
+            if ($deleted_spool_file) {
+                $this->writeError('Deleted spooled batch '.basename((string) $result->spool_file).": {$result->poison_count} of its events were rejected by the database (SQLSTATE {$sqlstate}).");
+            } elseif ($first_report) {
+                $this->writeError("{$result->poison_count} events were rejected by the database (SQLSTATE {$sqlstate}); they were dropped.");
+            }
+
+            if ($result->isMissingPartition() && ($deleted_spool_file || $first_report)) {
+                $this->writeError('No partition exists for the events\' recorded_at day: the scheduler is not running `php artisan app-watch:partitions`. Make sure `php artisan schedule:run` runs every minute.');
+            }
+
+            $this->reported_sqlstates[$sqlstate] = true;
         }
 
         if ($result->shouldRetry()) {
             $retry_at = $outbox->nextAttemptAt()?->toIso8601String() ?? 'now';
             $source = $result->spool_file === null ? '' : 'spooled ';
-            $this->writeError('Could not deliver '.count($result->pending)." {$source}events ({$result->failure}); retrying at {$retry_at}.");
+            $this->writeError('Could not write '.count($result->pending)." {$source}events to the database ({$result->failure}); retrying at {$retry_at}.");
         }
     }
 

@@ -104,7 +104,7 @@ final class Daemon
      * the received events, queue a due batch and try delivery. Returns the delivery attempt's
      * result, or null when none was made.
      */
-    public function tick(): ?IngestResult
+    public function tick(): ?WriteResult
     {
         if (is_resource($this->server)) {
             $this->poll($this->server);
@@ -121,7 +121,7 @@ final class Daemon
      * the Outbox spools what that attempt could not deliver. Returns the attempt's result, or null
      * when nothing was buffered.
      */
-    public function shutdown(): ?IngestResult
+    public function shutdown(): ?WriteResult
     {
         if (is_resource($this->server)) {
             fclose($this->server);

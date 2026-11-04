@@ -109,33 +109,16 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Monitor
-    |--------------------------------------------------------------------------
-    |
-    | The environment token issued by the App Watch monitor, the monitor's base
-    | URL and the ingest API version. The agent posts batches to
-    | "{monitor_url}/api/{api_version}/ingest".
-    |
-    */
-
-    'token' => env('APP_WATCH_TOKEN'),
-
-    'monitor_url' => env('APP_WATCH_URL'),
-
-    'api_version' => env('APP_WATCH_API_VERSION', 'v1'),
-
-    /*
-    |--------------------------------------------------------------------------
     | Local Daemon
     |--------------------------------------------------------------------------
     |
     | Where the app sends recorded events (newline-delimited JSON over TCP) and
-    | where `php artisan app-watch:agent` listens. The daemon posts a batch once
-    | `flush_events` events are buffered or the oldest has waited
-    | `flush_seconds`. Batches that still fail after three attempts, or that
+    | where `php artisan app-watch:agent` listens. The daemon writes a batch to
+    | the telemetry database once `flush_events` events are buffered or the
+    | oldest has waited `flush_seconds`. Batches that still fail after three attempts, or that
     | would push past `max_buffered_events` in memory, are written as gzip files
     | to `spool_path` (at most `spool_max_bytes`, the oldest deleted first) and
-    | replayed oldest first once the monitor accepts deliveries again.
+    | replayed oldest first once the database accepts writes again.
     |
     */
 

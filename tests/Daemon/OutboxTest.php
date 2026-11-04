@@ -4,25 +4,24 @@ declare(strict_types=1);
 
 use AppWatch\Agent\Daemon\Outbox;
 use Carbon\CarbonImmutable;
-use Illuminate\Http\Client\ConnectionException;
-use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 
 beforeEach(function (): void {
-    configureMonitor();
-    CarbonImmutable::setTestNow('2026-11-03 05:41:00');
-    Http::preventStrayRequests();
+    prepareTelemetryDatabase();
 
     $this->outbox = app(Outbox::class);
 });
 
 afterEach(function (): void {
+    restoreTelemetryConnection();
+    dropTelemetrySchema();
     CarbonImmutable::setTestNow();
+    Carbon::setTestNow();
 });
 
-it('retries a 503 with backoff and delivers the events once', function (): void {
-    Http::fakeSequence('monitor.test/*')
-        ->push(status: 503)
-        ->push(['accepted' => 3], 202);
+it('retries a failed write with backoff and stores the events once', function (): void {
+    breakTelemetryConnection();
     $events = daemonEvents(3);
     $this->outbox->push($events);
 
@@ -33,41 +32,47 @@ it('retries a 503 with backoff and delivers the events once', function (): void 
         ->and($this->outbox->nextAttemptAt()?->toDateTimeString())->toBe('2026-11-03 05:41:01')
         ->and($this->outbox->deliver())->toBeNull();
 
-    Http::assertSentCount(1);
-
+    restoreTelemetryConnection();
     CarbonImmutable::setTestNow('2026-11-03 05:41:01');
-    $delivered = $this->outbox->deliver();
+    $stored = $this->outbox->deliver();
 
-    expect($delivered?->delivered_count)->toBe(3)
+    expect($stored?->stored_count)->toBe(3)
         ->and($this->outbox->pending())->toBe([])
         ->and($this->outbox->isBackingOff())->toBeFalse()
-        ->and($this->outbox->deliver())->toBeNull();
-
-    Http::assertSentCount(2);
-    expect(Http::recorded()->map(fn (array $pair): array => ingestBatch($pair[0])['events'])->all())->toBe([$events, $events]);
+        ->and($this->outbox->deliver())->toBeNull()
+        ->and(storedRequestPaths())->toBe(['/orders/1', '/orders/2', '/orders/3']);
 });
 
-it('drops a batch the monitor rejects with 401 without retrying it', function (): void {
-    Http::fake(['monitor.test/*' => Http::response(status: 401)]);
+it('drops a batch the database rejects as poison without retrying it', function (): void {
+    failTelemetryInsertsWith('22P02');
     $this->outbox->push(daemonEvents(3));
 
     $result = $this->outbox->deliver();
 
-    expect($result?->rejected_status)->toBe(401)
-        ->and($result?->rejected_count)->toBe(3)
+    expect($result?->poison_count)->toBe(3)
+        ->and($result?->poison_sqlstate)->toBe('22P02')
+        ->and($result?->shouldRetry())->toBeFalse()
         ->and($this->outbox->pending())->toBe([])
         ->and($this->outbox->isBackingOff())->toBeFalse()
-        ->and($this->outbox->deliver())->toBeNull();
+        ->and($this->outbox->deliver())->toBeNull()
+        ->and(spooledBatches())->toBe([]);
+});
 
-    CarbonImmutable::setTestNow('2026-11-03 05:45:00');
+it('retries a retryable SQLSTATE such as a deadlock', function (): void {
+    failTelemetryInsertsWith('40P01');
+    $events = daemonEvents(2);
+    $this->outbox->push($events);
 
-    expect($this->outbox->deliver())->toBeNull();
+    $result = $this->outbox->deliver();
 
-    Http::assertSentCount(1);
+    expect($result?->shouldRetry())->toBeTrue()
+        ->and($result?->poison_count)->toBe(0)
+        ->and($this->outbox->pending())->toBe($events)
+        ->and($this->outbox->isBackingOff())->toBeTrue();
 });
 
 it('doubles the backoff after every failure up to 60 seconds', function (): void {
-    Http::fake(fn () => throw new ConnectionException('Connection refused'));
+    breakTelemetryConnection();
     $this->outbox->push(daemonEvents(1));
     $waits = [];
 
@@ -82,39 +87,27 @@ it('doubles the backoff after every failure up to 60 seconds', function (): void
     expect($waits)->toBe([1, 2, 4, 8, 16, 32, 60, 60, 60]);
 });
 
-it('waits for the Retry-After the monitor sent', function (): void {
-    Http::fake(['monitor.test/*' => Http::response(status: 429, headers: ['Retry-After' => '30'])]);
-    $this->outbox->push(daemonEvents(1));
-
-    $this->outbox->deliver();
-
-    expect($this->outbox->nextAttemptAt()?->toDateTimeString())->toBe('2026-11-03 05:41:30');
-});
-
-it('resets the backoff after a successful delivery', function (): void {
-    Http::fakeSequence('monitor.test/*')
-        ->push(status: 503)
-        ->push(status: 503)
-        ->push(status: 202)
-        ->push(status: 503);
+it('resets the backoff after a successful write', function (): void {
+    breakTelemetryConnection();
     $this->outbox->push(daemonEvents(1));
 
     $this->outbox->deliver();
     CarbonImmutable::setTestNow('2026-11-03 05:41:01');
     $this->outbox->deliver();
+
+    restoreTelemetryConnection();
     CarbonImmutable::setTestNow('2026-11-03 05:41:03');
     $this->outbox->deliver();
 
+    breakTelemetryConnection();
     $this->outbox->push(daemonEvents(1));
     $this->outbox->deliver();
 
     expect($this->outbox->nextAttemptAt()?->toDateTimeString())->toBe('2026-11-03 05:41:04');
 });
 
-it('keeps events pushed while backing off and sends them with the retried ones', function (): void {
-    Http::fakeSequence('monitor.test/*')
-        ->push(status: 503)
-        ->push(status: 202);
+it('keeps events pushed while backing off and writes them with the retried ones', function (): void {
+    breakTelemetryConnection();
     $first = daemonEvents(2);
     $second = [fixtureEvent('log')];
 
@@ -122,10 +115,14 @@ it('keeps events pushed while backing off and sends them with the retried ones',
     $this->outbox->deliver();
     $this->outbox->push($second);
 
-    CarbonImmutable::setTestNow('2026-11-03 05:41:01');
-    $this->outbox->deliver();
+    expect($this->outbox->pending())->toBe([...$first, ...$second]);
 
-    expect(ingestBatch(Http::recorded()[1][0])['events'])->toBe([...$first, ...$second]);
+    restoreTelemetryConnection();
+    CarbonImmutable::setTestNow('2026-11-03 05:41:01');
+
+    expect($this->outbox->deliver()?->stored_count)->toBe(3)
+        ->and(storedRequestPaths())->toBe(['/orders/1', '/orders/2'])
+        ->and(DB::connection('app_watch')->table('logs')->count())->toBe(1);
 });
 
 it('spools every pending event instead of holding more than the memory cap', function (): void {
@@ -144,13 +141,8 @@ it('spools every pending event instead of holding more than the memory cap', fun
         ->and($this->outbox->droppedCount())->toBe(0);
 });
 
-it('spools the pending events after three failed deliveries in a row', function (): void {
-    $attempts = 0;
-    Http::fake(function () use (&$attempts): never {
-        $attempts++;
-
-        throw new ConnectionException('Connection refused');
-    });
+it('spools the pending events after three failed writes in a row', function (): void {
+    breakTelemetryConnection();
     $events = daemonEvents(3);
     $this->outbox->push($events);
 
@@ -167,7 +159,7 @@ it('spools the pending events after three failed deliveries in a row', function 
     expect($this->outbox->pending())->toBe([])
         ->and(spooledBatches())->toBe([$events])
         ->and($this->outbox->isBackingOff())->toBeTrue()
-        ->and($attempts)->toBe(3);
+        ->and($this->outbox->nextAttemptAt()?->isFuture())->toBeTrue();
 });
 
 it('drops and counts the events the spool cannot take', function (): void {
@@ -188,9 +180,6 @@ it('drops and counts the events the spool cannot take', function (): void {
 });
 
 it('does nothing when nothing is pending', function (): void {
-    Http::fake();
-
-    expect($this->outbox->deliver())->toBeNull();
-
-    Http::assertNothingSent();
+    expect($this->outbox->deliver())->toBeNull()
+        ->and(telemetryRowCounts())->each->toBe(0);
 });

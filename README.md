@@ -1,12 +1,12 @@
 # App Watch Agent
 
-Records telemetry inside a monitored Laravel app and ships it to the App Watch monitor.
+Records telemetry inside a monitored Laravel app and writes it to the app's telemetry database, which the App Watch monitor reads.
 
 ```
-your app ──NDJSON over TCP──▶ local daemon (php artisan app-watch:agent) ──gzip HTTPS──▶ monitor /api/v1/ingest
+your app ──NDJSON over TCP──▶ local daemon (php artisan app-watch:agent) ──SQL──▶ telemetry database (Postgres)
 ```
 
-The app hands each finished trace to a daemon on the same host, which batches events and posts them to the monitor. A missing or stuck daemon costs a request at most ~250 ms (50 ms to connect, 200 ms to write); the events are then dropped and the app carries on.
+The app hands each finished trace to a daemon on the same host, which batches events and writes them to the telemetry database. A missing or stuck daemon costs a request at most ~250 ms (50 ms to connect, 200 ms to write); the events are then dropped and the app carries on.
 
 ## Requirements
 
@@ -40,9 +40,9 @@ The service provider is auto-discovered.
 
 ## Configuration
 
-1. In the monitor, open the environment's token page (`/settings/environments/{environment}/tokens`) and issue a token. Only organization Owners and Admins can issue tokens.
+1. In the monitor, look up the environment's id on the Settings → Environments page.
 
-2. Add the environment id, the telemetry database, the token and the monitor URL to the monitored app's `.env`:
+2. Add the environment id and the telemetry database to the monitored app's `.env`:
 
     ```env
     APP_WATCH_ENVIRONMENT_ID=123
@@ -50,11 +50,9 @@ The service provider is auto-discovered.
     APP_WATCH_DB_DATABASE=app_watch
     APP_WATCH_DB_USERNAME=app_watch_agent
     APP_WATCH_DB_PASSWORD=your-password
-    APP_WATCH_TOKEN=your-environment-token
-    APP_WATCH_URL=https://monitor.example.com
     ```
 
-    The agent records nothing while `APP_WATCH_ENABLED=false`, while `APP_WATCH_ENVIRONMENT_ID` is not a positive integer, or while its connection (`APP_WATCH_DB_CONNECTION`, default `app_watch`) is missing. The `app_watch` connection is registered from the `APP_WATCH_DB_*` variables unless the app already defines one with that name. The daemon still delivers to the monitor with the token until it writes to the database directly.
+    The agent records nothing while `APP_WATCH_ENABLED=false`, while `APP_WATCH_ENVIRONMENT_ID` is not a positive integer, or while its connection (`APP_WATCH_DB_CONNECTION`, default `app_watch`) is missing. The `app_watch` connection is registered from the `APP_WATCH_DB_*` variables unless the app already defines one with that name.
 
 3. Optionally publish the config to change sample rates or ignore rules:
 
@@ -80,9 +78,6 @@ The service provider is auto-discovered.
 | `APP_WATCH_ROLLUPS_GRACE_MINUTES`         | `2`                           | Closed minutes the minute rollup re-aggregates                                              |
 | `APP_WATCH_ROLLUPS_MINUTE_RETENTION_DAYS` | `7`                           | Days of minute rollups kept                                                                 |
 | `APP_WATCH_ROLLUPS_HOUR_RETENTION_DAYS`   | `90`                          | Days of hour rollups kept                                                                   |
-| `APP_WATCH_TOKEN`                         | —                             | Environment token issued by the monitor                                                     |
-| `APP_WATCH_URL`                           | —                             | Monitor base URL                                                                            |
-| `APP_WATCH_API_VERSION`                   | `v1`                          | Ingest API version                                                                          |
 | `APP_WATCH_DEPLOY`                        | —                             | Release tag or commit attached to every event                                               |
 | `APP_WATCH_LOG_LEVEL`                     | `warning`                     | Minimum PSR-3 level of log messages recorded                                                |
 | `APP_WATCH_DAEMON_HOST`                   | `127.0.0.1`                   | Daemon listen/connect host                                                                  |
@@ -123,8 +118,9 @@ stdout_logfile=/var/www/app/storage/logs/app-watch-agent.log
 
 Delivery behaviour:
 
-- Batches that fail are retried with backoff; after three attempts they are written as gzip files to the spool and replayed oldest first once the monitor accepts deliveries again.
-- A 401/403 (bad token) or other rejection is reported once on STDERR until a delivery succeeds.
+- Batches are written in chunks of at most 1000 events, each in one transaction with a statement timeout (10 s, 3 s for the final write on shutdown).
+- A connection error, timeout, deadlock or any other unexpected error is retried with backoff (1 s … 60 s); after three attempts the batch is written as a gzip file to the spool and replayed oldest first once the database accepts writes again.
+- A chunk the database rejects with an SQLSTATE of class 22 (bad data) or 23 (constraint violation) is poison: it is dropped (a spooled one is deleted), counted and reported once on STDERR with its SQLSTATE until a write succeeds. SQLSTATE 23514 means no partition exists for the events' day: make sure the scheduler runs `app-watch:partitions`.
 - On SIGTERM/SIGINT the daemon stops accepting, makes one final delivery attempt, spools the rest and exits 0. Without `pcntl` it cannot catch the signal, so buffered events are lost when it stops.
 
 ## What is recorded

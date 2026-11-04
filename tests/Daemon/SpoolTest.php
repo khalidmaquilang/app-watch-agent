@@ -5,13 +5,9 @@ declare(strict_types=1);
 use AppWatch\Agent\Daemon\Outbox;
 use AppWatch\Agent\Daemon\Spool;
 use Carbon\CarbonImmutable;
-use Illuminate\Http\Client\ConnectionException;
-use Illuminate\Support\Facades\Http;
 
 beforeEach(function (): void {
-    configureMonitor();
     CarbonImmutable::setTestNow('2026-11-03 05:41:00');
-    Http::preventStrayRequests();
 
     $this->spool = app(Spool::class);
 });
@@ -143,8 +139,8 @@ it('replaces a batch in place, keeping its position', function (): void {
         ->and(spooledBatches())->toBe([[fixtureEvent('log')], daemonEvents(1)]);
 });
 
-it('spools batches the monitor cannot be reached for, never exceeding spool_max_bytes', function (): void {
-    Http::fake(fn () => throw new ConnectionException('Connection refused'));
+it('spools batches while the database cannot be reached, never exceeding spool_max_bytes', function (): void {
+    breakTelemetryConnection();
     $outbox = app(Outbox::class);
     $this->spool->write(daemonEvents(10));
     $max_bytes = (int) ($this->spool->totalBytes() * 2.5);
