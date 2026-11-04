@@ -123,6 +123,14 @@ Delivery behaviour:
 - A chunk the database rejects with an SQLSTATE of class 22 (bad data) or 23 (constraint violation) is poison: it is dropped (a spooled one is deleted), counted and reported once on STDERR with its SQLSTATE until a write succeeds. SQLSTATE 23514 means no partition exists for the events' day: make sure the scheduler runs `app-watch:partitions`.
 - On SIGTERM/SIGINT the daemon stops accepting, makes one final delivery attempt, spools the rest and exits 0. Without `pcntl` it cannot catch the signal, so buffered events are lost when it stops.
 
+## Partition upkeep
+
+```bash
+php artisan app-watch:partitions [--database=app_watch]
+```
+
+Run it daily. It drops the raw telemetry partitions (`{table}_pYYYYMMDD`, UTC days) older than `APP_WATCH_RETENTION_DAYS` (default 14, must be at least 1), then creates today … today + `APP_WATCH_PARTITIONS_AHEAD_DAYS` (default 7), and prints `Created N partition(s), dropped M partition(s).` A second run the same day changes nothing. Only children of the tables in `app-watch.tables` (a fixed whitelist) are ever touched. Every partition is created or dropped by its own statement without a wrapping transaction; use a direct or session-mode connection, not a transaction-mode pooler (PgBouncer in transaction mode, Supabase port 6543).
+
 ## What is recorded
 
 No code changes are needed. Each request, queued job run and console command is one trace; its events are flushed to the daemon when it ends.

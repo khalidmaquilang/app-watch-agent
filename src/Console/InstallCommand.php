@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace AppWatch\Agent\Console;
 
-use AppWatch\Agent\Storage\PartitionDdl;
+use AppWatch\Agent\Maintenance\CreatePartitions;
 use AppWatch\Agent\Storage\Schema;
 use Carbon\CarbonImmutable;
 use Illuminate\Console\Command;
@@ -46,7 +46,7 @@ final class InstallCommand extends Command
     /**
      * Check the connection, migrate, create the partitions and print the installed schema version.
      */
-    public function handle(Repository $config, DatabaseManager $database, PartitionDdl $partition_ddl): int
+    public function handle(Repository $config, DatabaseManager $database, CreatePartitions $create_partitions): int
     {
         $connection_name = $this->connectionName($config);
 
@@ -71,10 +71,10 @@ final class InstallCommand extends Command
 
         $connection = $database->connection($connection_name);
         $days_ahead = $config->get('app-watch.partitions_ahead_days', Schema::DEFAULT_PARTITIONS_AHEAD_DAYS);
-        $created = $partition_ddl->createDaily(
-            $connection,
+        $created = $create_partitions->handle(
             CarbonImmutable::now('UTC'),
             is_numeric($days_ahead) ? max(0, (int) $days_ahead) : Schema::DEFAULT_PARTITIONS_AHEAD_DAYS,
+            $connection_name,
         );
         $version = $connection->table(Schema::VERSIONS_TABLE)->max('version');
 

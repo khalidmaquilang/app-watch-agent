@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use AppWatch\Agent\Storage\PartitionDdl;
+use AppWatch\Agent\Maintenance\CreatePartitions;
 use AppWatch\Agent\Storage\Schema;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Migrations\Migration;
@@ -20,10 +20,10 @@ return new class extends Migration
      */
     public function up(): void
     {
-        (new PartitionDdl)->createDaily(
-            DB::connection($this->getConnection()),
+        app(CreatePartitions::class)->handle(
             CarbonImmutable::now('UTC'),
             max(0, (int) config('app-watch.partitions_ahead_days', Schema::DEFAULT_PARTITIONS_AHEAD_DAYS)),
+            DB::connection($this->getConnection())->getName(),
         );
     }
 

@@ -377,3 +377,64 @@ function countTelemetryInserts(string $table): ArrayObject
 
     return $counter;
 }
+
+/**
+ * Install the agent's telemetry schema on a clean `app_watch` connection, then drop every daily
+ * partition it created, so partition upkeep starts from tables without partitions.
+ */
+function installTelemetrySchemaWithoutPartitions(): void
+{
+    installTelemetrySchema();
+
+    foreach (AppWatch\Agent\Storage\Schema::PARTITIONED_TABLES as $table) {
+        foreach (telemetryPartitionsOf($table) as $partition) {
+            DB::connection('app_watch')->statement("DROP TABLE {$partition}");
+        }
+    }
+}
+
+/**
+ * The partitions of a raw table on the `app_watch` connection, from pg_inherits, sorted by name.
+ *
+ * @return list<string>
+ */
+function telemetryPartitionsOf(string $table): array
+{
+    /** @var list<string> $partitions */
+    $partitions = collect(DB::connection('app_watch')->select(
+        'SELECT child.relname FROM pg_inherits
+         JOIN pg_class parent ON parent.oid = pg_inherits.inhparent
+         JOIN pg_class child ON child.oid = pg_inherits.inhrelid
+         WHERE parent.relname = ? ORDER BY child.relname',
+        [$table],
+    ))->pluck('relname')->values()->all();
+
+    return $partitions;
+}
+
+/**
+ * The partition bound expression of a partition on the `app_watch` connection.
+ */
+function telemetryPartitionBound(string $partition): mixed
+{
+    return DB::connection('app_watch')->scalar('SELECT pg_get_expr(relpartbound, oid) FROM pg_class WHERE relname = ?', [$partition]);
+}
+
+/**
+ * Create the daily partition `{table}_pYYYYMMDD` of a raw table for the given UTC day by hand.
+ */
+function createTelemetryPartition(string $table, CarbonImmutable $day): string
+{
+    $day = $day->utc()->startOfDay();
+    $partition = $table.'_p'.$day->format('Ymd');
+
+    DB::connection('app_watch')->statement(sprintf(
+        "CREATE TABLE %s PARTITION OF %s FOR VALUES FROM ('%s 00:00:00+00') TO ('%s 00:00:00+00')",
+        $partition,
+        $table,
+        $day->format('Y-m-d'),
+        $day->addDay()->format('Y-m-d'),
+    ));
+
+    return $partition;
+}

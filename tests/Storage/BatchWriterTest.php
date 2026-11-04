@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use AppWatch\Agent\Maintenance\CreatePartitions;
 use AppWatch\Agent\Storage\BatchWriter;
 use AppWatch\Agent\Storage\CacheEventWriter;
 use AppWatch\Agent\Storage\EventValidator;
@@ -11,7 +12,6 @@ use AppWatch\Agent\Storage\JobEventWriter;
 use AppWatch\Agent\Storage\LogEventWriter;
 use AppWatch\Agent\Storage\NormalizeExceptionMessage;
 use AppWatch\Agent\Storage\OutgoingRequestEventWriter;
-use AppWatch\Agent\Storage\PartitionDdl;
 use AppWatch\Agent\Storage\QueryEventWriter;
 use AppWatch\Agent\Storage\RequestEventWriter;
 use AppWatch\Agent\Storage\UpsertExceptionGroup;
@@ -128,7 +128,7 @@ it('skips events older than retention_days or further ahead than partitions_ahea
 
 it('keeps events exactly on the window bounds', function (): void {
     config(['app-watch.partitions_ahead_days' => 0]);
-    app(PartitionDdl::class)->createDaily(DB::connection('app_watch'), now()->toImmutable()->subDays(14), 0);
+    app(CreatePartitions::class)->handle(now()->toImmutable()->subDays(14), 0, 'app_watch');
 
     $stats = $this->writer->write([
         storageEvent('request', ['recorded_at' => now()->format('Y-m-d\TH:i:s.uP'), 'path' => '/newest']),

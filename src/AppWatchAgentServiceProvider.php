@@ -6,6 +6,7 @@ namespace AppWatch\Agent;
 
 use AppWatch\Agent\Console\AgentCommand;
 use AppWatch\Agent\Console\InstallCommand;
+use AppWatch\Agent\Console\PartitionsCommand;
 use AppWatch\Agent\Http\Middleware\StartRequestTraceMiddleware;
 use AppWatch\Agent\Listeners\FlushTraceListener;
 use AppWatch\Agent\Listeners\RecordCacheListener;
@@ -16,6 +17,9 @@ use AppWatch\Agent\Listeners\RecordOutgoingRequestListener;
 use AppWatch\Agent\Listeners\RecordQueryListener;
 use AppWatch\Agent\Listeners\RecordRequestListener;
 use AppWatch\Agent\Listeners\StartCommandTraceListener;
+use AppWatch\Agent\Maintenance\CreatePartitions;
+use AppWatch\Agent\Maintenance\DropExpiredPartitions;
+use AppWatch\Agent\Maintenance\PartitionedTables;
 use AppWatch\Agent\Storage\BatchWriter;
 use AppWatch\Agent\Storage\CacheEventWriter;
 use AppWatch\Agent\Storage\EventValidator;
@@ -81,6 +85,9 @@ class AppWatchAgentServiceProvider extends ServiceProvider
         $this->app->singleton(Recorder::class);
         $this->app->singleton(SqlNormalizer::class);
         $this->app->singleton(PartitionDdl::class);
+        $this->app->singleton(PartitionedTables::class);
+        $this->app->singleton(CreatePartitions::class);
+        $this->app->singleton(DropExpiredPartitions::class);
         $this->app->singleton(NormalizeExceptionMessage::class);
         $this->app->singleton(FingerprintException::class);
         $this->app->singleton(UpsertExceptionGroup::class);
@@ -119,7 +126,7 @@ class AppWatchAgentServiceProvider extends ServiceProvider
                 __DIR__.'/../config/app-watch.php' => config_path('app-watch.php'),
             ], 'app-watch-config');
 
-            $this->commands([AgentCommand::class, InstallCommand::class]);
+            $this->commands([AgentCommand::class, InstallCommand::class, PartitionsCommand::class]);
         }
 
         if ($this->app->make(AgentConfiguration::class)->isConfigured()) {

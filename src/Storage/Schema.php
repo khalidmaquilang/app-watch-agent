@@ -30,6 +30,11 @@ final class Schema
     public const int DEFAULT_PARTITIONS_AHEAD_DAYS = 7;
 
     /**
+     * The default number of days of raw telemetry kept before its daily partitions are dropped.
+     */
+    public const int DEFAULT_RETENTION_DAYS = 14;
+
+    /**
      * The agent's migrations directory.
      */
     public static function migrationsPath(): string
