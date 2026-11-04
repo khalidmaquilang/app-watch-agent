@@ -1,12 +1,21 @@
 # App Watch Agent
 
-Records telemetry inside a monitored Laravel app and writes it to the app's telemetry database, which the App Watch monitor reads.
+Records telemetry inside a monitored Laravel app and writes it straight into the app's own telemetry database (a Postgres database the client owns). App Watch connects to that database to read it for the dashboards; there is no ingest API.
+
+## Architecture
 
 ```
-your app ──NDJSON over TCP──▶ local daemon (php artisan app-watch:agent) ──SQL──▶ telemetry database (Postgres)
+app ──NDJSON over TCP──▶ daemon (php artisan app-watch:agent) ──SQL──▶ Postgres (client DB) ◀──read── App Watch
 ```
 
-The app hands each finished trace to a daemon on the same host, which batches events and writes them to the telemetry database. A missing or stuck daemon costs a request at most ~250 ms (50 ms to connect, 200 ms to write); the events are then dropped and the app carries on.
+```
+single server:    App Watch ──read──> Client DB <──write── Client app + agent daemon
+multiple servers: App Watch ──read──> Client DB <──write── agent daemon <── app servers
+```
+
+The app hands each finished trace to a daemon on the same host, which batches events and writes them to the telemetry database. A missing or stuck daemon costs a request at most ~250 ms (50 ms to connect, 200 ms to write); the events are then dropped and the app carries on. With several app servers, run a daemon on every host (or point `APP_WATCH_DAEMON_HOST` at a shared one); all of them write to the same client database.
+
+The agent owns the telemetry database: its schema (`app-watch:install`), the daily partitions and the rollups (both run by the app's scheduler). App Watch only reads it, apart from marking exception groups resolved.
 
 ## Requirements
 
@@ -14,6 +23,7 @@ The app hands each finished trace to a daemon on the same host, which batches ev
 - Laravel 13
 - Postgres 16+ (telemetry writes go to Postgres only)
 - `pcntl` extension (recommended) so the daemon flushes buffered events on SIGTERM/SIGINT
+- Multi-server apps: a cache store with atomic locks shared by all servers (`redis`, `database`, `memcached`, `dynamodb`, or `file` on a shared disk), so `onOneServer()` runs the upkeep once (see [Scheduling](#scheduling))
 
 ## Installation
 
@@ -38,29 +48,55 @@ composer update app-watch/agent
 
 The service provider is auto-discovered.
 
-## Configuration
+## Setup
 
-1. In the monitor, look up the environment's id on the Settings → Environments page.
+1. In App Watch, open **Settings → Environments** and expand **Agent setup** on the environment this app reports to. It shows the environment id and a copyable `.env` snippet (the database password is never filled in).
 
 2. Add the environment id and the telemetry database to the monitored app's `.env`:
 
     ```env
     APP_WATCH_ENVIRONMENT_ID=123
     APP_WATCH_DB_HOST=telemetry-db.example.com
+    APP_WATCH_DB_PORT=5432
     APP_WATCH_DB_DATABASE=app_watch
     APP_WATCH_DB_USERNAME=app_watch_agent
     APP_WATCH_DB_PASSWORD=your-password
+    APP_WATCH_DB_SSLMODE=require
     ```
+
+    To write telemetry into a connection the app already defines (e.g. its own `pgsql` database), set `APP_WATCH_DB_CONNECTION=pgsql` instead; the `APP_WATCH_DB_*` host settings are then ignored. Retention (`APP_WATCH_RETENTION_DAYS`, `APP_WATCH_PARTITIONS_AHEAD_DAYS`) and rollup keys (`APP_WATCH_ROLLUPS_*`) are optional; see [Environment variables](#environment-variables).
 
     The agent records nothing while `APP_WATCH_ENABLED=false`, while `APP_WATCH_ENVIRONMENT_ID` is not a positive integer, or while its connection (`APP_WATCH_DB_CONNECTION`, default `app_watch`) is missing. The `app_watch` connection is registered from the `APP_WATCH_DB_*` variables unless the app already defines one with that name.
 
-3. Optionally publish the config to change sample rates or ignore rules:
+3. Install the telemetry schema and today's partitions:
 
     ```bash
-    php artisan vendor:publish --tag=app-watch-config
+    php artisan app-watch:install [--database=app_watch]
     ```
 
-### Environment variables
+    Run it on first setup and again after every agent upgrade: it applies new migrations only and prints the installed schema version. A second run changes nothing. App Watch shows a "telemetry unavailable" page for a database whose schema is older than it supports.
+
+4. Start the daemon on every host that serves requests or runs queue workers (see [Running the daemon](#running-the-daemon)).
+
+5. Make sure the app's scheduler runs (see [Scheduler requirement](#scheduler-requirement)).
+
+6. In App Watch, save the database under **Settings → Databases** using the [read-only role](#app-watchs-read-only-role) and assign it to the project under **Settings → Projects**.
+
+Optionally publish the config to change sample rates or ignore rules:
+
+```bash
+php artisan vendor:publish --tag=app-watch-config
+```
+
+## Scheduler requirement
+
+The agent does its upkeep through the app's scheduler, so the app **must** run `php artisan schedule:run` every minute (cron) or `php artisan schedule:work`. Without it there are no rollups, so the dashboards' charts stay empty, and no new partitions: inserts start failing (SQLSTATE 23514) once the `APP_WATCH_PARTITIONS_AHEAD_DAYS` days of partitions created by `app-watch:install` run out.
+
+```cron
+* * * * * cd /var/www/app && php artisan schedule:run >> /dev/null 2>&1
+```
+
+## Environment variables
 
 | Variable                                  | Default                       | Purpose                                                                                     |
 | ----------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------- |
@@ -82,13 +118,13 @@ The service provider is auto-discovered.
 | `APP_WATCH_LOG_LEVEL`                     | `warning`                     | Minimum PSR-3 level of log messages recorded                                                |
 | `APP_WATCH_DAEMON_HOST`                   | `127.0.0.1`                   | Daemon listen/connect host                                                                  |
 | `APP_WATCH_DAEMON_PORT`                   | `2407`                        | Daemon listen/connect port                                                                  |
-| `APP_WATCH_DAEMON_FLUSH_EVENTS`           | `500`                         | Post a batch once this many events are buffered                                             |
+| `APP_WATCH_DAEMON_FLUSH_EVENTS`           | `500`                         | Write a batch once this many events are buffered                                            |
 | `APP_WATCH_DAEMON_FLUSH_SECONDS`          | `5`                           | ...or once the oldest buffered event is this old                                            |
 | `APP_WATCH_DAEMON_MAX_BUFFERED_EVENTS`    | `10000`                       | In-memory cap before batches spill to the spool                                             |
 | `APP_WATCH_DAEMON_SPOOL_PATH`             | `storage/app/app-watch/spool` | Where undeliverable batches are kept                                                        |
 | `APP_WATCH_DAEMON_SPOOL_MAX_BYTES`        | `104857600` (100 MB)          | Spool size cap; the oldest batches are deleted first                                        |
 
-### Sample rates and ignore rules
+## Sample rates and ignore rules
 
 In the published `config/app-watch.php`:
 
@@ -129,7 +165,7 @@ Delivery behaviour:
 php artisan app-watch:partitions [--database=app_watch]
 ```
 
-Run it daily. It drops the raw telemetry partitions (`{table}_pYYYYMMDD`, UTC days) older than `APP_WATCH_RETENTION_DAYS` (default 14, must be at least 1), then creates today … today + `APP_WATCH_PARTITIONS_AHEAD_DAYS` (default 7), and prints `Created N partition(s), dropped M partition(s).` A second run the same day changes nothing. Only children of the tables in `app-watch.tables` (a fixed whitelist) are ever touched. Every partition is created or dropped by its own statement without a wrapping transaction; use a direct or session-mode connection, not a transaction-mode pooler (PgBouncer in transaction mode, Supabase port 6543).
+Run it daily. It drops the raw telemetry partitions (`{table}_pYYYYMMDD`, UTC days) older than `APP_WATCH_RETENTION_DAYS` (default 14, must be at least 1), then creates today … today + `APP_WATCH_PARTITIONS_AHEAD_DAYS` (default 7), and prints `Created N partition(s), dropped M partition(s).` A second run the same day changes nothing. Only children of the tables in `app-watch.tables` (a fixed whitelist) are ever touched. Every partition is created or dropped by its own statement without a wrapping transaction, so the connection must not go through a transaction-mode pooler (see [Connection poolers](#connection-poolers)).
 
 ## Rollup upkeep
 
@@ -151,14 +187,53 @@ Rows are grouped per environment, type, key (truncated to 512 characters) and bu
 
 Once the agent is configured (enabled, `APP_WATCH_ENVIRONMENT_ID` set and a telemetry connection), it registers its own upkeep in the app's scheduler, so all the app needs is `php artisan schedule:run` every minute (or `php artisan schedule:work`):
 
-| Command                    | Runs                |
-| -------------------------- | ------------------- |
-| `app-watch:rollups minute` | every minute        |
-| `app-watch:rollups hour`   | hourly at :02       |
-| `app-watch:rollups prune`  | daily at 00:15      |
-| `app-watch:partitions`     | daily at 00:05      |
+| Command                    | Runs           |
+| -------------------------- | -------------- |
+| `app-watch:rollups minute` | every minute   |
+| `app-watch:rollups hour`   | hourly at :02  |
+| `app-watch:rollups prune`  | daily at 00:15 |
+| `app-watch:partitions`     | daily at 00:05 |
 
 Every entry runs `withoutOverlapping()` and `onOneServer()`. `onOneServer()` needs a cache store with atomic locks shared by all servers (`redis`, `database`, `memcached`, `dynamodb`, or `file` on a shared disk) as the scheduler's store (`cache.schedule_store`, else the default store). With the `array` or `null` store the agent logs a warning and schedules the entries without `onOneServer()`, which is fine for a single server; multi-server apps must use a lock-capable cache store or every server runs the upkeep. An unconfigured or disabled agent schedules nothing. `php artisan schedule:list` shows the entries.
+
+## Sharing one database between projects
+
+Several projects (and all their environments) can write to the same database. Every row carries its environment id, which is globally unique, and App Watch filters every query by it, so their data never mixes. There is nothing else to configure: give each app its own `APP_WATCH_ENVIRONMENT_ID` and the same `APP_WATCH_DB_*` settings, and assign the same saved database to each project in App Watch. Any of the apps may run `app-watch:install`; the upkeep is idempotent, so several schedulers running it against one database is harmless.
+
+## App Watch's read-only role
+
+App Watch should not connect with the agent's role. Create a separate role that can read everything and update only the resolved state of exception groups, and use it for the connection you save under **Settings → Databases**. Run this once as the agent's role (the owner of the telemetry tables), after `app-watch:install`, replacing the database name, the password and `app_watch_agent` (the role the agent connects as):
+
+```sql
+CREATE ROLE app_watch_reader LOGIN PASSWORD 'change-me';
+
+GRANT CONNECT ON DATABASE app_watch TO app_watch_reader;
+GRANT USAGE ON SCHEMA public TO app_watch_reader;
+
+-- Partitioned tables need no per-partition grant: Postgres checks privileges on the parent.
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO app_watch_reader;
+
+-- "Resolve" on the Exceptions page sets resolved_at (Eloquent also touches updated_at).
+GRANT UPDATE (resolved_at, updated_at) ON exception_groups TO app_watch_reader;
+
+-- Tables that future agent upgrades create stay readable.
+ALTER DEFAULT PRIVILEGES FOR ROLE app_watch_agent IN SCHEMA public
+    GRANT SELECT ON TABLES TO app_watch_reader;
+```
+
+The reader can then `SELECT` from every telemetry table and resolve exception groups, while any `INSERT`, `DELETE` or other `UPDATE` fails with `permission denied`.
+
+## Static egress IP
+
+App Watch connects to client databases from one fixed outbound IP address. When it is configured (`TELEMETRY_EGRESS_IP` on the App Watch server), it is shown on **Settings → Databases** and in the environment's **Agent setup** panel. Add it to your managed Postgres firewall or allowlist (AWS security group, Supabase network restrictions, DigitalOcean trusted sources, …) so App Watch can reach the database; nothing else needs to be opened.
+
+## Connection poolers
+
+Transaction-mode poolers (PgBouncer in `pool_mode = transaction`, Supabase's pooler on port 6543) break the agent's partition DDL in `app-watch:install` and `app-watch:partitions`. Point the agent (`APP_WATCH_DB_*` or `APP_WATCH_DB_CONNECTION`) at a direct connection or a session-mode pooler (Supabase port 5432). App Watch's read-only role only runs plain queries, so its saved connection may use a pooler.
+
+## Times are UTC
+
+The agent writes `recorded_at` as UTC `timestamptz` values, partitions are UTC days (`{table}_pYYYYMMDD`) and the rollup buckets are UTC minutes and hours; App Watch reads them as UTC too. Keep it that way: don't change the client database's or the roles' `timezone` setting to shift `recorded_at` (if in doubt, `ALTER DATABASE app_watch SET timezone TO 'UTC'`).
 
 ## What is recorded
 
@@ -173,6 +248,22 @@ No code changes are needed. Each request, queued job run and console command is 
 | Cache             | Hits, misses, writes, forgets                                |
 | Logs              | `MessageLogged` at or above `APP_WATCH_LOG_LEVEL`            |
 | Exceptions        | The exception handler's reportable callbacks                 |
+
+## Troubleshooting
+
+The daemon writes problems to STDERR (the Supervisor log above):
+
+| Message                                                                              | Meaning and fix                                                                                                                                              |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `App Watch is disabled (APP_WATCH_ENABLED=false)…`                                   | The daemon exits with 1. Set `APP_WATCH_ENABLED=true`.                                                                                                       |
+| `APP_WATCH_ENVIRONMENT_ID is not set…`                                               | Unconfigured: the daemon exits with 1. Copy the id from Settings → Environments → Agent setup.                                                               |
+| `The telemetry database connection "app_watch" is not configured…`                   | Unconfigured: set the `APP_WATCH_DB_*` variables or point `APP_WATCH_DB_CONNECTION` at an existing connection.                                               |
+| `Could not write N events to the database (…); retrying at …`                        | The database is unreachable, timed out or deadlocked. The batch is retried with backoff; check the host, firewall and credentials.                           |
+| `Spooled N events to … until the database can take them.`                            | Three attempts failed, so the batch went to the spool. It is replayed oldest first once writes succeed again.                                                |
+| `Dropped N spooled events: the spool reached its size limit…`                        | The database has been down long enough to fill `APP_WATCH_DAEMON_SPOOL_MAX_BYTES`; the oldest batches were deleted.                                          |
+| `N events were rejected by the database (SQLSTATE …); they were dropped.`            | Poison: SQLSTATE class 22 (bad data) or 23 (constraint violation). The chunk is not retried. Usually a schema mismatch: run `php artisan app-watch:install`. |
+| `No partition exists for the events' recorded_at day: the scheduler is not running…` | SQLSTATE 23514: partitions are missing. Run `php artisan app-watch:partitions` now and fix the [scheduler](#scheduler-requirement).                          |
+| `The pcntl extension is not available…`                                              | The daemon runs, but events buffered when it is stopped are lost. Install `pcntl`.                                                                           |
 
 ## Testing
 
