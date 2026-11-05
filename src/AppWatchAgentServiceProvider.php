@@ -130,6 +130,8 @@ class AppWatchAgentServiceProvider extends ServiceProvider
                 ? $app->make(DaemonTransport::class)
                 : new NullTransport,
         );
+
+        $this->registerExceptionRecording();
     }
 
     /**
@@ -245,8 +247,8 @@ class AppWatchAgentServiceProvider extends ServiceProvider
 
     /**
      * Start traces for requests, jobs and commands, and record request, job, query, outgoing
-     * request, cache, log and exception events, and flush each trace's events to the transport
-     * when the request, job run or command ends.
+     * request, cache and log events, and flush each trace's events to the transport when the
+     * request, job run or command ends.
      */
     protected function registerTracing(): void
     {
@@ -287,14 +289,23 @@ class AppWatchAgentServiceProvider extends ServiceProvider
         $this->app->terminating(function (): void {
             $this->app->make(FlushTraceListener::class)->handle();
         });
+    }
 
+    /**
+     * Record the exceptions the app's handler reports. This happens while providers register, not
+     * at boot, because a provider may then wrap the handler in a class that has no reportable
+     * callbacks (Collision does in the console), which would hide it from the agent. The listener
+     * stays silent until the agent is configured.
+     */
+    protected function registerExceptionRecording(): void
+    {
         $register_reportable = function (mixed $handler): void {
             if ($handler instanceof Handler) {
                 $handler->reportable([$this->app->make(RecordExceptionListener::class), 'handle']);
             }
         };
 
-        // Only the framework's handler supports reportable callbacks; it may not be resolved yet.
+        // shortcut: a wrapper registered before the agent still hides the handler; package providers load alphabetically, so Collision comes after it.
         if ($this->app->resolved(ExceptionHandler::class)) {
             $register_reportable($this->app->make(ExceptionHandler::class));
         } else {

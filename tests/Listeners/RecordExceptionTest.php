@@ -8,6 +8,8 @@ use AppWatch\Agent\Payloads\ExceptionEventPayload;
 use AppWatch\Agent\Recorder;
 use AppWatch\Agent\Support\TraceContext;
 use AppWatch\Agent\Tests\Fixtures\Exceptions\IgnoredException;
+use AppWatch\Agent\Tests\Fixtures\Exceptions\WrapExceptionHandlerServiceProvider;
+use AppWatch\Agent\Tests\Fixtures\Exceptions\WrappingExceptionHandler;
 use Illuminate\Contracts\Debug\ExceptionHandler;
 
 beforeEach(function (): void {
@@ -152,6 +154,22 @@ it('still lets the handler log the reported exception', function (): void {
     $types = array_map(fn (EventPayload $event): string => $event->type()->value, $this->recorder->flush((string) $trace_id));
 
     expect($types)->toBe(['exception', 'log']);
+});
+
+it('records an exception once when another provider wraps the exception handler', function (): void {
+    $this->extra_providers = [WrapExceptionHandlerServiceProvider::class];
+    $this->refreshApplication();
+    config(['logging.default' => 'null']);
+
+    $trace_id = app(TraceContext::class)->start();
+
+    report(new RuntimeException('wrapped'));
+
+    $events = flushedExceptionEvents($trace_id);
+
+    expect(app(ExceptionHandler::class))->toBeInstanceOf(WrappingExceptionHandler::class)
+        ->and($events)->toHaveCount(1)
+        ->and($events[0]['message'])->toBe('wrapped');
 });
 
 it('is registered as a singleton', function (): void {

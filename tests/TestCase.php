@@ -19,6 +19,13 @@ abstract class TestCase extends Orchestra
     protected string $spool_path = '';
 
     /**
+     * Providers registered after the agent's. A test sets them, then refreshes the application.
+     *
+     * @var array<int, class-string>
+     */
+    protected array $extra_providers = [];
+
+    /**
      * Swap the transport for an in-memory fake, so flushed traces never reach a real socket.
      * Tests that need the real DaemonTransport bind it themselves. Each test spools into its own
      * temporary directory.
@@ -80,6 +87,7 @@ abstract class TestCase extends Orchestra
     {
         return [
             AppWatchAgentServiceProvider::class,
+            ...$this->extra_providers,
         ];
     }
 }
