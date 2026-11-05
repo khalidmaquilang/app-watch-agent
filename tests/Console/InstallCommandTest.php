@@ -2,9 +2,13 @@
 
 declare(strict_types=1);
 
+use AppWatch\Agent\Payloads\QueryEventPayload;
+use AppWatch\Agent\Recorder;
 use AppWatch\Agent\Storage\PartitionDdl;
 use AppWatch\Agent\Storage\Schema as TelemetrySchema;
+use AppWatch\Agent\Support\TraceContext;
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -119,4 +123,31 @@ it('fails without changing anything when the connection does not exist', functio
         ->assertExitCode(1);
 
     expect(Schema::connection('pgsql')->getTableListing())->toBe([]);
+});
+
+it('starts no trace of its own, so none of its queries are recorded', function (): void {
+    $trace_context = app(TraceContext::class);
+    $trace_context->end();
+
+    $this->artisan('app-watch:install', ['--database' => 'app_watch'])->assertExitCode(0);
+
+    expect($trace_context->traceId())->toBeNull();
+});
+
+it('records none of its telemetry-connection queries when called from inside an already traced command', function (): void {
+    config(['app-watch.enabled' => true, 'app-watch.connection' => 'app_watch', 'database.default' => 'pgsql']);
+    $recorder = app(Recorder::class);
+    $recorder->reset();
+    $trace_id = app(TraceContext::class)->start();
+
+    Artisan::call('app-watch:install', ['--database' => 'app_watch']);
+
+    $telemetry_queries = array_filter(
+        $recorder->flush((string) $trace_id),
+        fn ($event): bool => $event instanceof QueryEventPayload && $event->toArray()['connection'] === 'app_watch',
+    );
+
+    expect($telemetry_queries)->toBe([]);
+
+    app(TraceContext::class)->end();
 });

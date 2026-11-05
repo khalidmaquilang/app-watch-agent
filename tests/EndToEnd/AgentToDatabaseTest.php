@@ -66,7 +66,7 @@ beforeEach(function (): void {
         TracedJob::dispatch();
     });
 
-    // Install before the real transport is bound: the install command's own trace goes to the fake one.
+    // Install before the real transport is bound (agent commands are never traced, so nothing is sent).
     installTelemetrySchema();
 
     $this->batcher = app(Batcher::class);
@@ -310,4 +310,20 @@ it('spools the events while the database is unreachable and stores them once it 
         ->and($spool->files())->toBe([])
         ->and(environmentRowCounts(42))->toMatchArray([...CHECKOUT_ROWS, 'exception_groups' => 1])
         ->and(storedTraceIds('requests', 42))->toBe([$trace_id]);
+});
+
+it('stores only the app\'s own queries after the agent\'s rollup and partition commands run', function (): void {
+    Artisan::call('app-watch:rollups', ['kind' => 'minute']);
+    Artisan::call('app-watch:rollups', ['kind' => 'hour']);
+    Artisan::call('app-watch:rollups', ['kind' => 'prune']);
+    Artisan::call('app-watch:partitions');
+    app(TraceContext::class)->end();
+    drainDaemon($this->daemon, $this->batcher);
+
+    expect(DB::connection('app_watch')->table('queries')->count())->toBe(0);
+
+    checkout();
+
+    expect(DB::connection('app_watch')->table('queries')->orderBy('id')->get(['environment_id', 'connection', 'sql'])->map(fn (object $row): array => (array) $row)->all())
+        ->toBe(array_fill(0, 3, ['environment_id' => 42, 'connection' => 'pgsql', 'sql' => 'select ?']));
 });

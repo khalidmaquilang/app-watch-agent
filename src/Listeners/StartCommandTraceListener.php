@@ -11,8 +11,9 @@ use Illuminate\Support\Str;
 use Throwable;
 
 /**
- * Starts a new trace for every artisan command except the long-running ones (the agent daemon,
- * queue workers, the scheduler, Horizon and Octane), whose work is traced per job or request.
+ * Starts a new trace for every artisan command except the long-running ones (queue workers, the
+ * scheduler, Horizon and Octane), whose work is traced per job or request, and the agent's own
+ * `app-watch:*` commands (daemon, rollups, partitions, install), whose upkeep is never telemetry.
  */
 final readonly class StartCommandTraceListener
 {
@@ -22,7 +23,7 @@ final readonly class StartCommandTraceListener
      * @var array<int, string>
      */
     public const array UNTRACED_COMMANDS = [
-        'app-watch:agent',
+        'app-watch:*',
         'queue:work',
         'queue:listen',
         'schedule:*',

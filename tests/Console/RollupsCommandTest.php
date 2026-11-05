@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use AppWatch\Agent\Recorder;
+use AppWatch\Agent\Support\TraceContext;
 use AppWatch\Agent\Tests\Support\TelemetryRows;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
@@ -164,3 +166,22 @@ it('fails without changing anything when the connection does not exist', functio
 
     expect(DB::connection('app_watch')->table('rollups_minute')->count())->toBe(0);
 });
+
+it('records none of its own queries, exceptions or logs', function (string $kind): void {
+    seedTwoEnvironmentMinute($this->minute);
+    $trace_context = app(TraceContext::class);
+    $trace_context->end();
+
+    $this->artisan('app-watch:rollups', ['kind' => $kind])->assertExitCode(0);
+
+    expect($trace_context->traceId())->toBeNull();
+
+    $trace_id = (string) $trace_context->start();
+
+    $this->artisan('app-watch:rollups', ['kind' => $kind])->assertExitCode(0);
+
+    expect($trace_context->traceId())->toBe($trace_id)
+        ->and(app(Recorder::class)->flush($trace_id))->toBe([]);
+
+    $trace_context->end();
+})->with(['minute', 'hour', 'prune']);

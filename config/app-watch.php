@@ -159,7 +159,9 @@ return [
     |--------------------------------------------------------------------------
     |
     | Request paths (globs), job class names (globs) and SQL regexes that are
-    | never recorded.
+    | never recorded. The agent's own `app-watch:*` commands and queries on its
+    | telemetry connection (unless it is also the app's default connection)
+    | are never recorded either.
     |
     */
 

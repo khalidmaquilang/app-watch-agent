@@ -5,12 +5,13 @@ declare(strict_types=1);
 namespace AppWatch\Agent\Support;
 
 use AppWatch\Agent\Enums\TelemetryTypeEnum;
+use Illuminate\Contracts\Config\Repository;
 use Illuminate\Support\Str;
 use Throwable;
 
 /**
  * The current trace (one per request, job or console command): its uuid v7 id, whether it is
- * sampled and when it started. Starting a new trace replaces the previous one, so nothing carries
+ * sampled, when it started and the app's default database connection at that moment. Starting a new trace replaces the previous one, so nothing carries
  * over between requests or jobs in long-running workers. A nested trace (a job run inside a
  * request, command or other job, e.g. on the sync queue) remembers its parent and restores it
  * when it ends, so the parent's later events keep their own trace id.
@@ -38,17 +39,25 @@ final class TraceContext
     private ?int $started_at = null;
 
     /**
+     * The app's default database connection (`database.default`) when the current trace started,
+     * null outside a trace. Kept so a temporary switch during the trace (e.g. `migrate --database=`)
+     * does not change which connection counts as the app's own.
+     */
+    private ?string $default_connection = null;
+
+    /**
      * The traces suspended by nested traces, innermost last.
      *
-     * @var array<int, array{trace_id: string|null, sampled: bool, started_at: int|null}>
+     * @var array<int, array{trace_id: string|null, sampled: bool, started_at: int|null, default_connection: string|null}>
      */
     private array $parents = [];
 
     /**
-     * Use the sampler to decide request and job traces.
+     * Use the sampler to decide request and job traces and the config to read the default connection.
      */
     public function __construct(
         private readonly Sampler $sampler,
+        private readonly Repository $config,
     ) {}
 
     /**
@@ -73,6 +82,7 @@ final class TraceContext
             'trace_id' => $this->trace_id,
             'sampled' => $this->sampled,
             'started_at' => $this->started_at,
+            'default_connection' => $this->default_connection,
         ];
 
         if (count($this->parents) > self::MAX_NESTING_DEPTH) {
@@ -98,6 +108,7 @@ final class TraceContext
         $this->trace_id = $parent['trace_id'];
         $this->sampled = $parent['sampled'];
         $this->started_at = $parent['started_at'];
+        $this->default_connection = $parent['default_connection'];
     }
 
     /**
@@ -142,6 +153,14 @@ final class TraceContext
     }
 
     /**
+     * The app's default database connection when the current trace started, null outside a trace.
+     */
+    public function defaultConnection(): ?string
+    {
+        return $this->default_connection;
+    }
+
+    /**
      * Milliseconds since the current trace started, null outside a trace.
      */
     public function elapsedMs(): ?float
@@ -161,6 +180,8 @@ final class TraceContext
         try {
             $this->trace_id = Str::uuid7()->toString();
             $this->started_at = (int) hrtime(true);
+            $default_connection = $this->config->get('database.default');
+            $this->default_connection = is_string($default_connection) ? $default_connection : null;
             $this->sampled = match (true) {
                 $ignored => false,
                 in_array($root_type, [TelemetryTypeEnum::Request, TelemetryTypeEnum::Job], true) => $this->sampler->shouldSample($root_type),
@@ -183,5 +204,6 @@ final class TraceContext
         $this->trace_id = null;
         $this->sampled = true;
         $this->started_at = null;
+        $this->default_connection = null;
     }
 }

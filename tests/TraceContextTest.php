@@ -143,3 +143,21 @@ it('keeps at most the maximum nesting depth of parent traces', function (): void
 
     expect($context->traceId())->toBeNull()->not->toBe($root_trace_id);
 });
+
+it('captures the default database connection when a trace starts and restores it after a nested trace', function (): void {
+    $context = app(TraceContext::class);
+    config(['database.default' => 'pgsql']);
+    $context->start(TelemetryTypeEnum::Request);
+
+    config(['database.default' => 'app_watch']);
+    expect($context->defaultConnection())->toBe('pgsql');
+
+    $context->startNested(TelemetryTypeEnum::Job);
+    expect($context->defaultConnection())->toBe('app_watch');
+
+    $context->endNested();
+    expect($context->defaultConnection())->toBe('pgsql');
+
+    $context->end();
+    expect($context->defaultConnection())->toBeNull();
+});

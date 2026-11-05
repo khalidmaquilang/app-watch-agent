@@ -164,6 +164,56 @@ it('records nothing without an environment id', function (): void {
     expect($this->recorder->flush((string) $trace_id))->toBe([]);
 });
 
+it('skips queries on the dedicated telemetry connection but records the same query on the default one', function (): void {
+    config(['app-watch.connection' => 'app_watch', 'database.default' => 'pgsql']);
+    $trace_id = $this->trace_context->start();
+
+    DB::connection('app_watch')->select('select 1');
+    DB::connection('pgsql')->select('select 1');
+
+    $events = flushedQueryEvents($trace_id);
+
+    expect($events)->toHaveCount(1)
+        ->and($events[0])->toMatchArray(['connection' => 'pgsql', 'sql' => 'select ?']);
+});
+
+it('records queries on the telemetry connection when it is also the app\'s default connection', function (): void {
+    config(['app-watch.connection' => 'pgsql', 'database.default' => 'pgsql']);
+    $trace_id = $this->trace_context->start();
+
+    AgentUser::query()->first();
+
+    $events = flushedQueryEvents($trace_id);
+
+    expect($events)->toHaveCount(1)
+        ->and($events[0]['connection'])->toBe('pgsql');
+});
+
+it('keeps skipping telemetry-connection queries when the default is switched to it during the trace', function (): void {
+    config(['app-watch.connection' => 'app_watch', 'database.default' => 'pgsql']);
+    $trace_id = $this->trace_context->start();
+
+    config(['database.default' => 'app_watch']);
+    DB::connection('app_watch')->select('select 1');
+    config(['database.default' => 'pgsql']);
+
+    expect(flushedQueryEvents($trace_id))->toBe([]);
+});
+
+it('records telemetry-connection queries when it was the default at trace start, even if the default changes later', function (): void {
+    config(['app-watch.connection' => 'pgsql', 'database.default' => 'pgsql']);
+    $trace_id = $this->trace_context->start();
+
+    config(['database.default' => 'app_watch']);
+    DB::connection('pgsql')->select('select 1');
+    config(['database.default' => 'pgsql']);
+
+    $events = flushedQueryEvents($trace_id);
+
+    expect($events)->toHaveCount(1)
+        ->and($events[0]['connection'])->toBe('pgsql');
+});
+
 it('is registered as a singleton', function (): void {
     expect(app(RecordQueryListener::class))->toBe(app(RecordQueryListener::class));
 });

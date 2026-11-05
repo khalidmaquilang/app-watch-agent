@@ -133,6 +133,8 @@ In the published `config/app-watch.php`:
 - `ignore.jobs` — job class name globs.
 - `ignore.queries` — SQL regexes, e.g. `'/^select \* from "sessions"/'`.
 
+The agent's own commands (`app-watch:*`) and every query on its telemetry connection (`APP_WATCH_DB_CONNECTION`) are never recorded, unless that connection is also the app's default one (e.g. `APP_WATCH_DB_CONNECTION=pgsql`), whose app queries are still recorded. An app command that queries the dedicated `app_watch` connection itself is therefore not recorded on that connection either.
+
 ## Running the daemon
 
 ```bash
@@ -194,7 +196,7 @@ Once the agent is configured (enabled, `APP_WATCH_ENVIRONMENT_ID` set and a tele
 | `app-watch:rollups prune`  | daily at 00:15 |
 | `app-watch:partitions`     | daily at 00:05 |
 
-Every entry runs `withoutOverlapping()` and `onOneServer()`. `onOneServer()` needs a cache store with atomic locks shared by all servers (`redis`, `database`, `memcached`, `dynamodb`, or `file` on a shared disk) as the scheduler's store (`cache.schedule_store`, else the default store). With the `array` or `null` store the agent logs a warning and schedules the entries without `onOneServer()`, which is fine for a single server; multi-server apps must use a lock-capable cache store or every server runs the upkeep. An unconfigured or disabled agent schedules nothing. `php artisan schedule:list` shows the entries.
+Every entry runs `withoutOverlapping()` and `onOneServer()`. `onOneServer()` needs a cache store with atomic locks shared by all servers (`redis`, `database`, `memcached`, `dynamodb`, or `file` on a shared disk) as the scheduler's store (`cache.schedule_store`, else the default store). With the `array` or `null` store the agent logs a warning and schedules the entries without `onOneServer()`, which is fine for a single server; multi-server apps must use a lock-capable cache store or every server runs the upkeep. An unconfigured or disabled agent schedules nothing. `php artisan schedule:list` shows the entries. These commands get no trace, so their rollup, prune and partition SQL never shows up as the app's own telemetry.
 
 ## Sharing one database between projects
 

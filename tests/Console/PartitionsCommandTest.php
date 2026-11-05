@@ -2,8 +2,10 @@
 
 declare(strict_types=1);
 
+use AppWatch\Agent\Recorder;
 use AppWatch\Agent\Storage\PartitionDdl;
 use AppWatch\Agent\Storage\Schema;
+use AppWatch\Agent\Support\TraceContext;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 
@@ -138,4 +140,22 @@ it('fails without changing anything when the connection does not exist', functio
         ->assertExitCode(1);
 
     expect(telemetryPartitionCount())->toBe(0);
+});
+
+it('records none of its own queries, exceptions or logs', function (): void {
+    $trace_context = app(TraceContext::class);
+    $trace_context->end();
+
+    $this->artisan('app-watch:partitions')->assertExitCode(0);
+
+    expect($trace_context->traceId())->toBeNull()
+        ->and(telemetryPartitionCount())->toBe(56);
+
+    $trace_id = (string) $trace_context->start();
+
+    $this->artisan('app-watch:partitions')->assertExitCode(0);
+
+    expect(app(Recorder::class)->flush($trace_id))->toBe([]);
+
+    $trace_context->end();
 });

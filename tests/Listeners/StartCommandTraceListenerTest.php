@@ -36,7 +36,7 @@ it('does not trace long-running commands', function (string $command): void {
     event(new CommandStarting($command, new ArrayInput([]), new NullOutput));
 
     expect($this->trace_context->traceId())->toBeNull();
-})->with(['app-watch:agent', 'queue:work', 'queue:listen', 'schedule:run', 'schedule:work', 'horizon', 'octane:start']);
+})->with(['queue:work', 'queue:listen', 'schedule:run', 'schedule:work', 'horizon', 'octane:start']);
 
 it('does not trace commands without an environment id', function (): void {
     config(['app-watch.environment_id' => null]);
@@ -44,4 +44,17 @@ it('does not trace commands without an environment id', function (): void {
     event(new CommandStarting('orders:sync', new ArrayInput([]), new NullOutput));
 
     expect($this->trace_context->traceId())->toBeNull();
+});
+
+it('does not trace the agent\'s own commands', function (string $command): void {
+    event(new CommandStarting($command, new ArrayInput([]), new NullOutput));
+
+    expect($this->trace_context->traceId())->toBeNull();
+})->with(['app-watch:agent', 'app-watch:rollups', 'app-watch:partitions', 'app-watch:install', 'app-watch:future-command']);
+
+it('still traces an app command after an agent command', function (): void {
+    event(new CommandStarting('app-watch:rollups', new ArrayInput([]), new NullOutput));
+    event(new CommandStarting('inspire', new ArrayInput([]), new NullOutput));
+
+    expect($this->trace_context->traceId())->not->toBeNull();
 });
