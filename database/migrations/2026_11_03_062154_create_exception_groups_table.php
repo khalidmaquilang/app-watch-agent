@@ -27,7 +27,6 @@ return new class extends Migration
             $table->timestampTz('first_seen_at', 6);
             $table->timestampTz('last_seen_at', 6);
             $table->bigInteger('occurrences')->default(0);
-            $table->timestampTz('resolved_at', 6)->nullable();
             $table->timestamps();
 
             $table->unique(['environment_id', 'fingerprint']);

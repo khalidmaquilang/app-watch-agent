@@ -15,7 +15,7 @@ multiple servers: App Watch ──read──> Client DB <──write── agent
 
 The app hands each finished trace to a daemon on the same host, which batches events and writes them to the telemetry database. A missing or stuck daemon costs a request at most ~250 ms (50 ms to connect, 200 ms to write); the events are then dropped and the app carries on. With several app servers, run a daemon on every host (or point `APP_WATCH_DAEMON_HOST` at a shared one); all of them write to the same client database.
 
-The agent owns the telemetry database: its schema (`app-watch:install`), the daily partitions and the rollups (both run by the app's scheduler). App Watch only reads it, apart from marking exception groups resolved.
+The agent owns the telemetry database: its schema (`app-watch:install`), the daily partitions and the rollups (both run by the app's scheduler). App Watch only reads it; issue triage (resolving, ignoring, assigning) lives in App Watch's own database.
 
 ## Requirements
 
@@ -204,7 +204,7 @@ Several projects (and all their environments) can write to the same database. Ev
 
 ## App Watch's read-only role
 
-App Watch should not connect with the agent's role. Create a separate role that can read everything and update only the resolved state of exception groups, and use it for the connection you save under **Settings → Databases**. Run this once as the agent's role (the owner of the telemetry tables), after `app-watch:install`, replacing the database name, the password and `app_watch_agent` (the role the agent connects as):
+App Watch should not connect with the agent's role. Create a separate, SELECT-only role and use it for the connection you save under **Settings → Databases**. Run this once as the agent's role (the owner of the telemetry tables), after `app-watch:install`, replacing the database name, the password and `app_watch_agent` (the role the agent connects as):
 
 ```sql
 CREATE ROLE app_watch_reader LOGIN PASSWORD 'change-me';
@@ -215,15 +215,12 @@ GRANT USAGE ON SCHEMA public TO app_watch_reader;
 -- Partitioned tables need no per-partition grant: Postgres checks privileges on the parent.
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO app_watch_reader;
 
--- "Resolve" on the Exceptions page sets resolved_at (Eloquent also touches updated_at).
-GRANT UPDATE (resolved_at, updated_at) ON exception_groups TO app_watch_reader;
-
 -- Tables that future agent upgrades create stay readable.
 ALTER DEFAULT PRIVILEGES FOR ROLE app_watch_agent IN SCHEMA public
     GRANT SELECT ON TABLES TO app_watch_reader;
 ```
 
-The reader can then `SELECT` from every telemetry table and resolve exception groups, while any `INSERT`, `DELETE` or other `UPDATE` fails with `permission denied`.
+The reader can then `SELECT` from every telemetry table, while any `INSERT`, `UPDATE` or `DELETE` fails with `permission denied`. App Watch never writes to the telemetry database: issue triage (resolving, ignoring, assigning) lives in App Watch's own database.
 
 ## Static egress IP
 

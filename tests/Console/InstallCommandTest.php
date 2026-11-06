@@ -30,7 +30,7 @@ function installedPartitionCount(): int
 
 it('creates the telemetry tables, the schema version and the migrations table', function (): void {
     $this->artisan('app-watch:install', ['--database' => 'pgsql'])
-        ->expectsOutputToContain('schema version 1 is installed on [pgsql]')
+        ->expectsOutputToContain('schema version '.TelemetrySchema::CURRENT_VERSION.' is installed on [pgsql]')
         ->assertExitCode(0);
 
     $schema = Schema::connection('pgsql');
@@ -39,7 +39,9 @@ it('creates the telemetry tables, the schema version and the migrations table', 
         expect($schema->hasTable($table))->toBeTrue("{$table} is missing");
     }
 
-    expect(DB::connection('pgsql')->table('app_watch_schema_versions')->pluck('version')->all())->toBe([1])
+    expect(DB::connection('pgsql')->table('app_watch_schema_versions')->pluck('version')->all())->toBe([TelemetrySchema::CURRENT_VERSION])
+        ->and(TelemetrySchema::CURRENT_VERSION)->toBe(2)
+        ->and($schema->hasColumn('exception_groups', 'resolved_at'))->toBeFalse()
         ->and(DB::connection('pgsql')->table('migrations')->count())->toBe(5);
 });
 

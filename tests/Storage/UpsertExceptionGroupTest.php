@@ -8,6 +8,7 @@ use Carbon\CarbonImmutable;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 beforeEach(function (): void {
     $this->travelTo(Carbon::parse('2026-11-03 06:00:00', 'UTC'));
@@ -67,8 +68,7 @@ it('creates a group for a new fingerprint and returns its id', function (): void
         ->and($group->line)->toBe(88)
         ->and(isoUtc($group->first_seen_at))->toBe('2026-11-03T05:41:04.010550+00:00')
         ->and(isoUtc($group->last_seen_at))->toBe('2026-11-03T05:41:04.010550+00:00')
-        ->and($group->occurrences)->toBe(1)
-        ->and($group->resolved_at)->toBeNull();
+        ->and($group->occurrences)->toBe(1);
 });
 
 it('adds to the existing group of the same fingerprint and keeps the first-seen raw message', function (): void {
@@ -125,22 +125,23 @@ it('creates separate groups for the same exception in two environments', functio
         ->and(DB::connection('app_watch')->table('exception_groups')->where('environment_id', 2)->sole()->occurrences)->toBe(1);
 });
 
-it('re-opens a resolved group that receives an occurrence recorded after it was resolved', function (): void {
+it('only updates last_seen_at and occurrences when an occurrence arrives after the group exists', function (): void {
     upsertFixtureGroup(recorded_at: '2026-11-03T04:00:00.000000+00:00');
-    DB::connection('app_watch')->table('exception_groups')->update(['resolved_at' => '2026-11-03 05:00:00+00']);
+    $before = soleExceptionGroup();
 
     upsertFixtureGroup(recorded_at: '2026-11-03T05:41:04.010550+00:00');
+    $after = soleExceptionGroup();
 
-    expect(soleExceptionGroup()->resolved_at)->toBeNull();
-});
-
-it('keeps a group resolved when the occurrence was recorded before it was resolved', function (): void {
-    upsertFixtureGroup(recorded_at: '2026-11-03T03:00:00.000000+00:00');
-    DB::connection('app_watch')->table('exception_groups')->update(['resolved_at' => '2026-11-03 05:00:00+00']);
-
-    upsertFixtureGroup(recorded_at: '2026-11-03T04:00:00.000000+00:00');
-
-    expect(isoUtc(soleExceptionGroup()->resolved_at))->toBe('2026-11-03T05:00:00.000000+00:00');
+    expect($after->id)->toBe($before->id)
+        ->and($after->occurrences)->toBe(2)
+        ->and(isoUtc($after->last_seen_at))->toBe('2026-11-03T05:41:04.010550+00:00')
+        ->and($after->first_seen_at)->toBe($before->first_seen_at)
+        ->and($after->message)->toBe($before->message)
+        ->and($after->class)->toBe($before->class)
+        ->and($after->file)->toBe($before->file)
+        ->and($after->line)->toBe($before->line)
+        ->and($after->created_at)->toBe($before->created_at)
+        ->and(Schema::connection('app_watch')->hasColumn('exception_groups', 'resolved_at'))->toBeFalse();
 });
 
 it('cuts a file path longer than the group column for the group row only', function (): void {

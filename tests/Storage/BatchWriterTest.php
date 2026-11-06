@@ -200,7 +200,6 @@ it('groups two identical exceptions into one group with 2 occurrences, and a lat
     expect($group->occurrences)->toBe(2)
         ->and(DB::connection('app_watch')->table('exception_occurrences')->where('exception_group_id', $group->id)->count())->toBe(2);
 
-    DB::connection('app_watch')->table('exception_groups')->update(['resolved_at' => '2026-11-03 05:50:00+00']);
     $this->writer->write([storageEvent('exception', ['recorded_at' => '2026-11-03T05:55:00.000000+00:00'])]);
 
     $updated = DB::connection('app_watch')->table('exception_groups')->sole();
@@ -208,8 +207,7 @@ it('groups two identical exceptions into one group with 2 occurrences, and a lat
     expect($updated->id)->toBe($group->id)
         ->and($updated->occurrences)->toBe(3)
         ->and($updated->first_seen_at)->toBe($group->first_seen_at)
-        ->and(Carbon::parse($updated->last_seen_at)->utc()->format('Y-m-d\TH:i:s.uP'))->toBe('2026-11-03T05:55:00.000000+00:00')
-        ->and($updated->resolved_at)->toBeNull();
+        ->and(Carbon::parse($updated->last_seen_at)->utc()->format('Y-m-d\TH:i:s.uP'))->toBe('2026-11-03T05:55:00.000000+00:00');
 });
 
 it('rolls the whole batch back and rethrows when one type fails to insert', function (): void {

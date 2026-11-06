@@ -23,21 +23,19 @@ final class UpsertExceptionGroup
     /**
      * One atomic upsert keyed on the (environment_id, fingerprint) unique index. Postgres evaluates every
      * SET expression against the existing row, so the message switches to the new one only when the new
-     * occurrence is older than the group's current first occurrence. A resolved group that receives an
-     * occurrence recorded after its `resolved_at` is re-opened, exactly like App Watch's upsert.
+     * occurrence is older than the group's current first occurrence. Issue status (resolved, ignored)
+     * lives in App Watch's central `issues` table, so the agent never touches it.
      */
     public const string UPSERT_SQL = <<<'SQL'
         INSERT INTO exception_groups
-            (environment_id, fingerprint, class, message, file, line, first_seen_at, last_seen_at, occurrences, resolved_at, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+            (environment_id, fingerprint, class, message, file, line, first_seen_at, last_seen_at, occurrences, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (environment_id, fingerprint) DO UPDATE SET
             message = CASE WHEN EXCLUDED.first_seen_at < exception_groups.first_seen_at
                 THEN EXCLUDED.message ELSE exception_groups.message END,
             first_seen_at = LEAST(exception_groups.first_seen_at, EXCLUDED.first_seen_at),
             last_seen_at = GREATEST(exception_groups.last_seen_at, EXCLUDED.last_seen_at),
             occurrences = exception_groups.occurrences + EXCLUDED.occurrences,
-            resolved_at = CASE WHEN exception_groups.resolved_at IS NOT NULL AND EXCLUDED.last_seen_at > exception_groups.resolved_at
-                THEN NULL ELSE exception_groups.resolved_at END,
             updated_at = EXCLUDED.updated_at
         RETURNING id
         SQL;

@@ -72,6 +72,10 @@ it('has no foreign key constraints on the exception group and rollup tables', fu
         ->and(collect(Schema::connection('pgsql')->getColumns($table))->firstWhere('name', 'environment_id')['type'] ?? null)->toBe('bigint');
 })->with(['exception_groups', 'rollups_minute', 'rollups_hour']);
 
+it('has no resolved_at column on exception groups, because issue status lives in App Watch', function (): void {
+    expect(Schema::connection('pgsql')->hasColumn('exception_groups', 'resolved_at'))->toBeFalse();
+});
+
 it('keeps the exception group indexes', function (): void {
     expect(telemetryIndexColumns('exception_groups'))->toContain('environment_id,fingerprint', 'environment_id,last_seen_at')
         ->and(collect(Schema::connection('pgsql')->getIndexes('exception_groups'))
@@ -93,7 +97,8 @@ it('keeps the rollup indexes', function (string $table): void {
 it('records the schema version with its install time', function (): void {
     $row = DB::connection('pgsql')->table(TelemetrySchema::VERSIONS_TABLE)->sole();
 
-    expect($row->version)->toBe(1)
+    expect(TelemetrySchema::CURRENT_VERSION)->toBe(2)
+        ->and($row->version)->toBe(TelemetrySchema::CURRENT_VERSION)
         ->and($row->installed_at)->not->toBeNull()
         ->and(collect(Schema::connection('pgsql')->getIndexes(TelemetrySchema::VERSIONS_TABLE))->firstWhere('primary', true)['columns'] ?? null)->toBe(['version']);
 });

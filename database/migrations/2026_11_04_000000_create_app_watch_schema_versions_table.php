@@ -10,8 +10,7 @@ use Illuminate\Support\Facades\Schema;
 
 /**
  * The installed telemetry schema versions. App Watch reads the highest version before it reads a client
- * database. Every later agent migration that changes the schema inserts the next version in the same
- * migration.
+ * database. The row records TelemetrySchema::CURRENT_VERSION, which goes up whenever the schema changes.
  */
 return new class extends Migration
 {
@@ -26,7 +25,7 @@ return new class extends Migration
         });
 
         DB::connection($this->getConnection())->table(TelemetrySchema::VERSIONS_TABLE)->insert([
-            'version' => 1,
+            'version' => TelemetrySchema::CURRENT_VERSION,
             'installed_at' => now('UTC'),
         ]);
     }

@@ -19,10 +19,20 @@ final class Schema
     ];
 
     /**
-     * The table holding one row per installed schema version. Every agent migration that changes the
-     * schema inserts the next version in the same migration.
+     * The table holding one row per installed schema version. The install migration records
+     * CURRENT_VERSION.
      */
     public const string VERSIONS_TABLE = 'app_watch_schema_versions';
+
+    /**
+     * The telemetry schema version this agent installs. The original migrations are edited in place
+     * (nothing is live yet) and the versions table records this value on install. App Watch refuses to
+     * read a database whose highest recorded version is below its supported version.
+     *
+     * - 1: initial schema.
+     * - 2: `exception_groups.resolved_at` removed; issue status lives in App Watch's central `issues` table.
+     */
+    public const int CURRENT_VERSION = 2;
 
     /**
      * The default number of days ahead of today the daily partitions are created for.
