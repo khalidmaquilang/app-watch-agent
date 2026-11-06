@@ -15,6 +15,7 @@ use AppWatch\Agent\Storage\NormalizeExceptionMessage;
 use AppWatch\Agent\Storage\OutgoingRequestEventWriter;
 use AppWatch\Agent\Storage\QueryEventWriter;
 use AppWatch\Agent\Storage\RequestEventWriter;
+use AppWatch\Agent\Storage\ScheduledTaskEventWriter;
 use AppWatch\Agent\Storage\UpsertExceptionGroup;
 use AppWatch\Agent\Storage\WriteStats;
 use Illuminate\Database\Events\QueryExecuted;
@@ -65,17 +66,17 @@ it('stores every fixture event in its table in one transaction and returns match
     expect($stats)->toBeInstanceOf(WriteStats::class)
         ->and($stats->stored)->toBe([
             'request' => 1, 'query' => 1, 'job' => 1, 'outgoing_request' => 1, 'cache' => 1, 'log' => 1, 'exception' => 1,
-            'command' => 1,
+            'command' => 1, 'scheduled_task' => 1,
         ])
-        ->and($stats->storedCount())->toBe(8)
+        ->and($stats->storedCount())->toBe(9)
         ->and($stats->skipped_retention)->toBe(0)
         ->and($stats->malformed)->toBe(0)
         ->and(telemetryRowCounts())->toBe([
             'requests' => 1, 'queries' => 1, 'job_runs' => 1, 'outgoing_requests' => 1, 'cache_events' => 1, 'logs' => 1,
-            'exception_occurrences' => 1, 'command_runs' => 1, 'exception_groups' => 1,
+            'exception_occurrences' => 1, 'command_runs' => 1, 'scheduled_task_runs' => 1, 'exception_groups' => 1,
         ])
         ->and($transactions)->toBe(1)
-        ->and($insert_levels)->toHaveCount(9)
+        ->and($insert_levels)->toHaveCount(10)
         ->and(array_unique($insert_levels))->toBe([1]);
 
     foreach (array_keys(telemetryRowCounts()) as $table) {
@@ -160,7 +161,7 @@ it('counts malformed events and stores the rest of the batch', function (): void
         ->and($stats->stored['cache'])->toBe(1)
         ->and(telemetryRowCounts())->toBe([
             'requests' => 1, 'queries' => 0, 'job_runs' => 0, 'outgoing_requests' => 0, 'cache_events' => 1, 'logs' => 0,
-            'exception_occurrences' => 0, 'command_runs' => 0, 'exception_groups' => 0,
+            'exception_occurrences' => 0, 'command_runs' => 0, 'scheduled_task_runs' => 0, 'exception_groups' => 0,
         ]);
 });
 
@@ -195,29 +196,58 @@ it('drops and counts a command event with an out-of-range exit code or nested ar
     'arguments with 101 keys' => [['arguments' => array_fill_keys(array_map(fn (int $index): string => "option{$index}", range(1, EventValidator::MAX_ARGUMENTS + 1)), '?')]],
 ]);
 
-it('drops and counts a scheduled_task event, which has no writer yet, without failing the batch', function (): void {
-    $scheduled_task_event = [
-        ...array_intersect_key(fixtureEvent('job'), array_flip(['trace_id', 'recorded_at', 'host', 'deploy'])),
-        'type' => 'scheduled_task',
-        'task' => 'emails:send --force',
-        'kind' => 'command',
-        'expression' => '* * * * *',
-        'timezone' => null,
-        'outcome' => 'succeeded',
-        'duration_ms' => 12.5,
-        'exit_code' => 0,
-        'without_overlapping' => false,
-        'on_one_server' => false,
-    ];
+it('stores a scheduled_task event of every outcome in scheduled_task_runs with all its columns', function (): void {
+    $stats = $this->writer->write([
+        storageEvent('scheduled_task', ['trace_id' => '018f0000-0000-7000-8000-000000000001']),
+        storageEvent('scheduled_task', [
+            'trace_id' => '018f0000-0000-7000-8000-000000000002', 'task' => 'App\\Jobs\\PruneOrders', 'kind' => 'job', 'timezone' => null,
+            'outcome' => 'failed', 'exit_code' => null, 'duration_ms' => 12, 'without_overlapping' => false, 'on_one_server' => true,
+        ]),
+        storageEvent('scheduled_task', [
+            'trace_id' => '018f0000-0000-7000-8000-000000000003', 'task' => 'Closure', 'kind' => 'closure', 'outcome' => 'skipped',
+            'exit_code' => null, 'duration_ms' => 0,
+        ]),
+    ]);
 
-    $stats = $this->writer->write([$scheduled_task_event, storageEvent('request')]);
+    $rows = DB::connection('app_watch')->table('scheduled_task_runs')->orderBy('trace_id')->get();
+
+    expect($stats->stored['scheduled_task'])->toBe(3)
+        ->and($stats->malformed)->toBe(0)
+        ->and($rows)->toHaveCount(3)
+        ->and((array) $rows[0])->toMatchArray([
+            'environment_id' => 1,
+            'trace_id' => '018f0000-0000-7000-8000-000000000001',
+            'host' => 'worker-1',
+            'deploy' => 'v1.4.2',
+            'task' => 'emails:send ? --queue=?',
+            'kind' => 'command',
+            'expression' => '*/5 * * * *',
+            'timezone' => 'Asia/Manila',
+            'outcome' => 'succeeded',
+            'exit_code' => 0,
+            'duration_ms' => 842.5,
+            'without_overlapping' => true,
+            'on_one_server' => false,
+        ])
+        ->and((array) $rows[1])->toMatchArray([
+            'task' => 'App\\Jobs\\PruneOrders', 'kind' => 'job', 'timezone' => null, 'outcome' => 'failed', 'exit_code' => null,
+            'duration_ms' => 12.0, 'without_overlapping' => false, 'on_one_server' => true,
+        ])
+        ->and((array) $rows[2])->toMatchArray(['kind' => 'closure', 'outcome' => 'skipped', 'exit_code' => null, 'duration_ms' => 0.0]);
+});
+
+it('drops and counts an invalid scheduled_task event and stores the rest of the batch', function (array $scheduled_task_overrides): void {
+    $stats = $this->writer->write([storageEvent('scheduled_task', $scheduled_task_overrides), storageEvent('request')]);
 
     expect($stats->malformed)->toBe(1)
-        ->and($stats->stored)->not->toHaveKey('scheduled_task')
+        ->and($stats->stored['scheduled_task'])->toBe(0)
         ->and($stats->stored['request'])->toBe(1)
-        ->and($stats->storedCount())->toBe(1)
+        ->and(DB::connection('app_watch')->table('scheduled_task_runs')->count())->toBe(0)
         ->and(storedRequestPaths())->toHaveCount(1);
-});
+})->with([
+    'unknown outcome maybe' => [['outcome' => 'maybe']],
+    'unknown kind cron' => [['kind' => 'cron']],
+]);
 
 it('opens no transaction and runs no query when nothing is storable', function (): void {
     $queries = 0;
@@ -307,6 +337,7 @@ it('registers the storage classes as singletons', function (string $class): void
     OutgoingRequestEventWriter::class,
     CacheEventWriter::class,
     CommandEventWriter::class,
+    ScheduledTaskEventWriter::class,
     LogEventWriter::class,
     ExceptionEventWriter::class,
     FingerprintException::class,

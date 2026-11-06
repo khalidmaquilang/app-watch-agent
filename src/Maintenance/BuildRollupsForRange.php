@@ -37,9 +37,12 @@ final class BuildRollupsForRange
     /**
      * How each rolled-up telemetry type is aggregated: the raw table it is read from, the SQL expression
      * of its key, the SQL condition that counts a row as an error and the SQL expression of its duration
-     * (null when the type has no duration statistics). Logs and exceptions are not rolled up.
+     * (null when the type has no duration statistics). Logs and exceptions are not rolled up. An optional
+     * `where` SQL condition limits the rows a type rolls up: scheduled task runs skipped by a filter or an
+     * overlap lock did not run, so they count neither in `count` nor in the duration statistics (App Watch
+     * counts them from the raw rows).
      *
-     * @var array<string, array{raw_table: string, key: string, error: string, duration: string|null}>
+     * @var array<string, array{raw_table: string, key: string, error: string, duration: string|null, where?: string}>
      */
     public const array TYPES = [
         'request' => [
@@ -77,6 +80,13 @@ final class BuildRollupsForRange
             'key' => 'command',
             'error' => 'failed',
             'duration' => 'duration_ms',
+        ],
+        'scheduled_task' => [
+            'raw_table' => 'scheduled_task_runs',
+            'key' => 'task',
+            'error' => "outcome = 'failed'",
+            'duration' => 'duration_ms',
+            'where' => "outcome <> 'skipped'",
         ],
     ];
 
@@ -125,6 +135,7 @@ final class BuildRollupsForRange
 
         foreach (self::TYPES as $type => $definition) {
             $duration = $definition['duration'];
+            $where = isset($definition['where']) ? " AND ({$definition['where']})" : '';
 
             $duration_columns = $duration === null
                 ? 'NULL::double precision, NULL::double precision, NULL::double precision, NULL::double precision, NULL::double precision'
@@ -145,7 +156,7 @@ final class BuildRollupsForRange
                     count(*) FILTER (WHERE {$definition['error']}),
                     {$duration_columns}
                 FROM {$definition['raw_table']}
-                WHERE recorded_at >= ?::timestamptz AND recorded_at < ?::timestamptz
+                WHERE recorded_at >= ?::timestamptz AND recorded_at < ?::timestamptz{$where}
                 GROUP BY 1, 2, 3, 4
                 ON CONFLICT (environment_id, type, key, bucket) DO UPDATE SET
                     count = EXCLUDED.count,

@@ -29,6 +29,10 @@ final class TelemetryRows
             'cache_events' => ['store' => 'redis', 'key' => 'users:1', 'operation' => 'hit', 'duration_ms' => null],
             'logs' => ['level' => 'error', 'message' => 'Something happened', 'context' => null],
             'command_runs' => ['command' => 'orders:sync', 'arguments' => null, 'exit_code' => 0, 'failed' => false, 'duration_ms' => 100.0],
+            'scheduled_task_runs' => [
+                'task' => 'emails:send', 'kind' => 'command', 'expression' => '* * * * *', 'timezone' => null, 'outcome' => 'succeeded',
+                'exit_code' => 0, 'duration_ms' => 100.0, 'without_overlapping' => false, 'on_one_server' => false,
+            ],
             default => [],
         };
 
@@ -82,6 +86,16 @@ final class TelemetryRows
     public static function commandRun(DateTimeInterface $recorded_at, array $overrides = []): void
     {
         self::raw('command_runs', ['recorded_at' => $recorded_at, ...$overrides]);
+    }
+
+    /**
+     * Insert one scheduled task run row recorded at the given time.
+     *
+     * @param  array<string, mixed>  $overrides
+     */
+    public static function scheduledTaskRun(DateTimeInterface $recorded_at, array $overrides = []): void
+    {
+        self::raw('scheduled_task_runs', ['recorded_at' => $recorded_at, ...$overrides]);
     }
 
     /**

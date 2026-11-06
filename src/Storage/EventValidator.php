@@ -7,6 +7,8 @@ namespace AppWatch\Agent\Storage;
 use AppWatch\Agent\Enums\CacheOperationEnum;
 use AppWatch\Agent\Enums\JobStatusEnum;
 use AppWatch\Agent\Enums\LogLevelEnum;
+use AppWatch\Agent\Enums\ScheduledTaskKindEnum;
+use AppWatch\Agent\Enums\ScheduledTaskOutcomeEnum;
 use AppWatch\Agent\Enums\TelemetryTypeEnum;
 use Carbon\CarbonImmutable;
 use DateTimeImmutable;
@@ -110,6 +112,17 @@ final class EventValidator
             'exit_code' => ['int', false, [0, 255]],
             'duration_ms' => ['number', false],
             'failed' => ['bool', false],
+        ],
+        'scheduled_task' => [
+            'task' => ['string', false, 255],
+            'kind' => ['scheduled_task_kind', false],
+            'expression' => ['string', false, 100],
+            'timezone' => ['string', true, 64],
+            'outcome' => ['scheduled_task_outcome', false],
+            'duration_ms' => ['number', false],
+            'exit_code' => ['int', true, [0, 255]],
+            'without_overlapping' => ['bool', false],
+            'on_one_server' => ['bool', false],
         ],
     ];
 
@@ -235,6 +248,8 @@ final class EventValidator
             'job_status' => is_string($value) && JobStatusEnum::tryFrom($value) !== null ? $value : null,
             'cache_operation' => is_string($value) && CacheOperationEnum::tryFrom($value) !== null ? $value : null,
             'log_level' => is_string($value) && LogLevelEnum::tryFrom($value) !== null ? $value : null,
+            'scheduled_task_kind' => is_string($value) && ScheduledTaskKindEnum::tryFrom($value) !== null ? $value : null,
+            'scheduled_task_outcome' => is_string($value) && ScheduledTaskOutcomeEnum::tryFrom($value) !== null ? $value : null,
             'context' => $this->context($value),
             'trace' => $this->trace($value),
             'arguments' => $this->arguments($value),

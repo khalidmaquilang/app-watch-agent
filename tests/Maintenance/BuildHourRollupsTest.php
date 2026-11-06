@@ -82,6 +82,28 @@ it('rolls up command runs per command over the hour with failures as errors, ide
     expect(TelemetryRows::rollups('rollups_hour'))->toEqual($rows);
 });
 
+it('rolls up scheduled task runs per task over the hour with skipped runs left out, idempotently', function (): void {
+    foreach ([['succeeded', 100], ['failed', 200], ['skipped', 0]] as $index => [$outcome, $duration]) {
+        TelemetryRows::scheduledTaskRun($this->hour->addMinutes($index * 20), ['task' => 'emails:send', 'outcome' => $outcome, 'duration_ms' => $duration]);
+    }
+
+    expect($this->builder->handle())->toBe(1);
+
+    $rows = TelemetryRows::rollups('rollups_hour');
+
+    expect($rows)->toHaveCount(1)
+        ->and($rows[0]['type'])->toBe('scheduled_task')
+        ->and($rows[0]['key'])->toBe('emails:send')
+        ->and($rows[0]['bucket'])->toBe('2026-11-03T12:00:00+00:00')
+        ->and($rows[0]['count'])->toBe(2)
+        ->and($rows[0]['error_count'])->toBe(1)
+        ->and((float) $rows[0]['max'])->toEqualWithDelta(200, 0.01);
+
+    $this->builder->handle();
+
+    expect(TelemetryRows::rollups('rollups_hour'))->toEqual($rows);
+});
+
 it('differs from the average of the minute p95s', function (): void {
     foreach (range(1, 59) as $second) {
         TelemetryRows::request($this->hour->addSeconds($second), ['duration_ms' => 1]);

@@ -84,6 +84,43 @@ it('rolls up command runs per command with failures as errors, idempotently', fu
     expect(TelemetryRows::rollups('rollups_minute'))->toEqual($rows);
 });
 
+it('rolls up scheduled task runs per task with failures as errors and skipped runs left out, idempotently', function (): void {
+    $runs = [['succeeded', 100], ['succeeded', 300], ['failed', 200], ['skipped', 0]];
+
+    foreach ($runs as $index => [$outcome, $duration]) {
+        TelemetryRows::scheduledTaskRun($this->minute->addSeconds($index + 1), [
+            'task' => 'emails:send', 'outcome' => $outcome, 'duration_ms' => $duration, 'exit_code' => $outcome === 'failed' ? 1 : 0,
+        ]);
+    }
+
+    $now = CarbonImmutable::parse('2026-11-03 12:01:00', 'UTC');
+
+    expect($this->builder->handle($now))->toBe(1);
+
+    $rows = TelemetryRows::rollups('rollups_minute');
+
+    expect($rows)->toHaveCount(1)
+        ->and($rows[0]['type'])->toBe('scheduled_task')
+        ->and($rows[0]['key'])->toBe('emails:send')
+        ->and($rows[0]['bucket'])->toBe('2026-11-03T12:00:00+00:00')
+        ->and($rows[0]['count'])->toBe(3)
+        ->and($rows[0]['error_count'])->toBe(1)
+        ->and((float) $rows[0]['duration_sum'])->toEqualWithDelta(600, 0.01)
+        ->and((float) $rows[0]['p50'])->toEqualWithDelta(200, 0.01)
+        ->and((float) $rows[0]['max'])->toEqualWithDelta(300, 0.01);
+
+    $this->builder->handle($now);
+
+    expect(TelemetryRows::rollups('rollups_minute'))->toEqual($rows);
+});
+
+it('writes no scheduled task rollup for a task whose runs were all skipped', function (): void {
+    TelemetryRows::scheduledTaskRun($this->minute->addSeconds(1), ['task' => 'emails:send', 'outcome' => 'skipped', 'duration_ms' => 0]);
+
+    expect($this->builder->handle(CarbonImmutable::parse('2026-11-03 12:01:00', 'UTC')))->toBe(0)
+        ->and(TelemetryRows::rollups('rollups_minute'))->toBe([]);
+});
+
 it('never rolls up the current open minute', function (): void {
     TelemetryRows::request(CarbonImmutable::parse('2026-11-03 12:01:00', 'UTC'));
     TelemetryRows::request(CarbonImmutable::parse('2026-11-03 12:01:29', 'UTC'));

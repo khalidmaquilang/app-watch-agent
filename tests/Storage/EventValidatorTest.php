@@ -17,7 +17,7 @@ it('accepts every fixture event and returns exactly its contract fields', functi
     expect($validated)->not->toBeNull()
         ->and(array_keys($validated))->toBe(array_keys($event))
         ->and($validated)->toEqual($event);
-})->with(['request', 'query', 'job', 'outgoing_request', 'cache', 'log', 'exception', 'command']);
+})->with(['request', 'query', 'job', 'outgoing_request', 'cache', 'log', 'exception', 'command', 'scheduled_task']);
 
 it('drops unknown keys such as an environment_id from the event', function (): void {
     expect($this->validator->validate(storageEvent('request', ['environment_id' => 99, 'extra' => true])))
@@ -43,6 +43,8 @@ it('accepts optional fields as null or missing and returns them as null', functi
     'log' => ['log', [], ['context']],
     'command' => ['command', ['arguments' => null], []],
     'command without arguments' => ['command', [], ['arguments']],
+    'scheduled task' => ['scheduled_task', ['timezone' => null, 'exit_code' => null], []],
+    'scheduled task without timezone and exit code' => ['scheduled_task', [], ['timezone', 'exit_code']],
 ]);
 
 it('casts integer durations to float', function (): void {
@@ -73,6 +75,20 @@ it('accepts command limits at their boundaries', function (): void {
         ->and($this->validator->validate(storageEvent('command', ['arguments' => ['a' => 1, 'b' => 1.5, 'c' => true, 'd' => null]])))->not->toBeNull();
 });
 
+it('accepts scheduled task limits at their boundaries and every kind and outcome', function (): void {
+    expect($this->validator->validate(storageEvent('scheduled_task', ['task' => str_repeat('t', 255), 'expression' => str_repeat('e', 100), 'timezone' => str_repeat('z', 64)])))->not->toBeNull()
+        ->and($this->validator->validate(storageEvent('scheduled_task', ['exit_code' => 255])))->not->toBeNull()
+        ->and($this->validator->validate(storageEvent('scheduled_task', ['outcome' => 'skipped', 'duration_ms' => 0]))['duration_ms'] ?? null)->toBe(0.0);
+
+    foreach (['command', 'job', 'closure', 'exec'] as $kind) {
+        expect($this->validator->validate(storageEvent('scheduled_task', ['kind' => $kind])))->not->toBeNull();
+    }
+
+    foreach (['succeeded', 'failed', 'skipped'] as $outcome) {
+        expect($this->validator->validate(storageEvent('scheduled_task', ['outcome' => $outcome])))->not->toBeNull();
+    }
+});
+
 it('accepts a log context of exactly 64 KB serialized', function (): void {
     $overhead = strlen((string) json_encode(['blob' => '']));
 
@@ -84,7 +100,18 @@ it('rejects an event that breaks the contract', function (mixed $event): void {
 })->with([
     'not an array' => fn (): string => 'foo',
     'unknown type' => fn (): array => storageEvent('job', ['type' => 'span']),
-    'scheduled_task type without contract fields yet' => fn (): array => storageEvent('job', ['type' => 'scheduled_task']),
+    'scheduled_task type with the fields of another type' => fn (): array => storageEvent('job', ['type' => 'scheduled_task']),
+    'scheduled task outcome maybe' => fn (): array => storageEvent('scheduled_task', ['outcome' => 'maybe']),
+    'scheduled task kind cron' => fn (): array => storageEvent('scheduled_task', ['kind' => 'cron']),
+    'scheduled task over 255 characters' => fn (): array => storageEvent('scheduled_task', ['task' => str_repeat('t', 256)]),
+    'scheduled task expression over 100 characters' => fn (): array => storageEvent('scheduled_task', ['expression' => str_repeat('e', 101)]),
+    'scheduled task timezone over 64 characters' => fn (): array => storageEvent('scheduled_task', ['timezone' => str_repeat('z', 65)]),
+    'scheduled task exit_code 256' => fn (): array => storageEvent('scheduled_task', ['exit_code' => 256]),
+    'scheduled task exit_code -1' => fn (): array => storageEvent('scheduled_task', ['exit_code' => -1]),
+    'scheduled task negative duration_ms' => fn (): array => storageEvent('scheduled_task', ['duration_ms' => -1]),
+    'missing scheduled task expression' => fn (): array => Arr::except(fixtureEvent('scheduled_task'), 'expression'),
+    'missing scheduled task without_overlapping flag' => fn (): array => Arr::except(fixtureEvent('scheduled_task'), 'without_overlapping'),
+    'scheduled task on_one_server flag as an integer' => fn (): array => storageEvent('scheduled_task', ['on_one_server' => 1]),
     'command type with the fields of another type' => fn (): array => storageEvent('job', ['type' => 'command']),
     'missing type' => fn (): array => Arr::except(fixtureEvent('query'), 'type'),
     'a type that is not a scalar' => fn (): array => storageEvent('request', ['type' => ['request']]),

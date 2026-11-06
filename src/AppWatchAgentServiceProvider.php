@@ -40,6 +40,7 @@ use AppWatch\Agent\Storage\OutgoingRequestEventWriter;
 use AppWatch\Agent\Storage\PartitionDdl;
 use AppWatch\Agent\Storage\QueryEventWriter;
 use AppWatch\Agent\Storage\RequestEventWriter;
+use AppWatch\Agent\Storage\ScheduledTaskEventWriter;
 use AppWatch\Agent\Storage\UpsertExceptionGroup;
 use AppWatch\Agent\Support\AgentConfiguration;
 use AppWatch\Agent\Support\IgnoreRules;
@@ -121,6 +122,7 @@ class AppWatchAgentServiceProvider extends ServiceProvider
         $this->app->singleton(OutgoingRequestEventWriter::class);
         $this->app->singleton(CacheEventWriter::class);
         $this->app->singleton(CommandEventWriter::class);
+        $this->app->singleton(ScheduledTaskEventWriter::class);
         $this->app->singleton(LogEventWriter::class);
         $this->app->singleton(ExceptionEventWriter::class);
         $this->app->singleton(BatchWriter::class);

@@ -39,7 +39,7 @@ it('merges the default config', function (): void {
         ->and(config('app-watch.retention_days'))->toBe(14)
         ->and(config('app-watch.partitions_ahead_days'))->toBe(7)
         ->and(config('app-watch.rollups'))->toBe(['grace_minutes' => 2, 'minute_retention_days' => 7, 'hour_retention_days' => 90])
-        ->and(config('app-watch.tables'))->toBe(['requests', 'queries', 'job_runs', 'outgoing_requests', 'cache_events', 'logs', 'exception_occurrences', 'command_runs']);
+        ->and(config('app-watch.tables'))->toBe(['requests', 'queries', 'job_runs', 'outgoing_requests', 'cache_events', 'logs', 'exception_occurrences', 'command_runs', 'scheduled_task_runs']);
 });
 
 it('reads the environment id as an integer and leaves it null while unset', function (?string $value, ?int $expected): void {

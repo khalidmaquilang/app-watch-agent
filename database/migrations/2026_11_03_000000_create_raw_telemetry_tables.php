@@ -84,6 +84,17 @@ return new class extends Migration
             failed boolean NOT NULL,
             duration_ms double precision NOT NULL
             SQL,
+        'scheduled_task_runs' => <<<'SQL'
+            task varchar(255) NOT NULL,
+            kind varchar(20) NOT NULL,
+            expression varchar(100) NOT NULL,
+            timezone varchar(64) NULL,
+            outcome varchar(20) NOT NULL,
+            exit_code smallint NULL,
+            duration_ms double precision NOT NULL,
+            without_overlapping boolean NOT NULL DEFAULT false,
+            on_one_server boolean NOT NULL DEFAULT false
+            SQL,
     ];
 
     /**
@@ -115,6 +126,7 @@ return new class extends Migration
         }
 
         $connection->statement('CREATE INDEX exception_occurrences_exception_group_id_recorded_at_index ON exception_occurrences (exception_group_id, recorded_at)');
+        $connection->statement('CREATE INDEX scheduled_task_runs_environment_id_task_recorded_at_index ON scheduled_task_runs (environment_id, task, recorded_at)');
     }
 
     /**

@@ -7,6 +7,8 @@ use AppWatch\Agent\Daemon\Daemon;
 use AppWatch\Agent\Enums\CacheOperationEnum;
 use AppWatch\Agent\Enums\JobStatusEnum;
 use AppWatch\Agent\Enums\LogLevelEnum;
+use AppWatch\Agent\Enums\ScheduledTaskKindEnum;
+use AppWatch\Agent\Enums\ScheduledTaskOutcomeEnum;
 use AppWatch\Agent\Payloads\CacheEventPayload;
 use AppWatch\Agent\Payloads\CommandEventPayload;
 use AppWatch\Agent\Payloads\EventMetadata;
@@ -16,6 +18,7 @@ use AppWatch\Agent\Payloads\LogEventPayload;
 use AppWatch\Agent\Payloads\OutgoingRequestEventPayload;
 use AppWatch\Agent\Payloads\QueryEventPayload;
 use AppWatch\Agent\Payloads\RequestEventPayload;
+use AppWatch\Agent\Payloads\ScheduledTaskEventPayload;
 use AppWatch\Agent\Recorder;
 use AppWatch\Agent\Storage\Schema;
 use AppWatch\Agent\Support\TraceContext;
@@ -27,6 +30,7 @@ use AppWatch\Agent\Transport\DaemonTransport;
 use AppWatch\Agent\Transport\FakeTransport;
 use AppWatch\Agent\Transport\Transport;
 use Carbon\CarbonImmutable;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Support\Carbon;
@@ -249,6 +253,31 @@ it('stores a traced Artisan command run in command_runs with its redacted argume
         ->and(TelemetryRows::partitionOf('command_runs', (int) $run->id))->toBe('command_runs_p'.CarbonImmutable::now('UTC')->format('Ymd'));
 });
 
+it('stores the scheduled task runs of schedule:run in scheduled_task_runs, skipped runs included', function (): void {
+    $schedule = new Schedule;
+    $this->app->instance(Schedule::class, $schedule);
+    $schedule->call(static fn () => null)->description('emails:send')->everyMinute()->withoutOverlapping();
+    $schedule->call(static fn () => null)->description('reports:build')->when(static fn (): bool => false);
+    app(TraceContext::class)->end();
+
+    Artisan::call('schedule:run');
+    app(TraceContext::class)->end();
+    drainDaemon($this->daemon, $this->batcher);
+
+    $runs = DB::connection('app_watch')->table('scheduled_task_runs')->orderBy('task')->get();
+
+    expect($runs)->toHaveCount(2)
+        ->and((array) $runs[0])->toMatchArray([
+            'environment_id' => 42, 'task' => 'emails:send', 'kind' => 'closure', 'expression' => '* * * * *',
+            'outcome' => 'succeeded', 'exit_code' => null, 'without_overlapping' => true, 'on_one_server' => false,
+        ])
+        ->and((array) $runs[1])->toMatchArray([
+            'environment_id' => 42, 'task' => 'reports:build', 'kind' => 'closure', 'outcome' => 'skipped', 'duration_ms' => 0.0,
+        ])
+        ->and($runs[0]->trace_id)->not->toBe($runs[1]->trace_id)
+        ->and(TelemetryRows::partitionOf('scheduled_task_runs', (int) $runs[0]->id))->toBe('scheduled_task_runs_p'.CarbonImmutable::now('UTC')->format('Ymd'));
+});
+
 it('counts a second identical exception in the same exception group', function (): void {
     checkout();
     $first = DB::connection('app_watch')->table('exception_groups')->first();
@@ -285,6 +314,7 @@ it('routes events recorded at 23:59:59 UTC into that day\'s partitions', functio
         new LogEventPayload($metadata, LogLevelEnum::Warning, 'Checkout is slow', null),
         new ExceptionEventPayload($metadata, CheckoutFailedException::class, 'Card declined', '/app/Checkout.php', 10, [], false),
         new CommandEventPayload($metadata, 'orders:sync', [], 0, 15.0),
+        new ScheduledTaskEventPayload($metadata, 'orders:sync', ScheduledTaskKindEnum::Command, '* * * * *', null, ScheduledTaskOutcomeEnum::Succeeded, 15.0, 0, false, false),
     ]);
     drainDaemon($this->daemon, $this->batcher);
 

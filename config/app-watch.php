@@ -106,6 +106,7 @@ return [
         'logs',
         'exception_occurrences',
         'command_runs',
+        'scheduled_task_runs',
     ],
 
     /*

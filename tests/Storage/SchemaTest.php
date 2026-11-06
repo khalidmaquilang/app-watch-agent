@@ -77,6 +77,35 @@ it('has the command run columns', function (): void {
         ->and($columns['duration_ms']['nullable'])->toBeFalse();
 });
 
+it('has the scheduled task run columns', function (): void {
+    $columns = collect(Schema::connection('pgsql')->getColumns('scheduled_task_runs'))->keyBy('name');
+
+    expect($columns['task']['type'])->toBe('character varying(255)')
+        ->and($columns['task']['nullable'])->toBeFalse()
+        ->and($columns['kind']['type'])->toBe('character varying(20)')
+        ->and($columns['kind']['nullable'])->toBeFalse()
+        ->and($columns['expression']['type'])->toBe('character varying(100)')
+        ->and($columns['expression']['nullable'])->toBeFalse()
+        ->and($columns['timezone']['type'])->toBe('character varying(64)')
+        ->and($columns['timezone']['nullable'])->toBeTrue()
+        ->and($columns['outcome']['type'])->toBe('character varying(20)')
+        ->and($columns['outcome']['nullable'])->toBeFalse()
+        ->and($columns['exit_code']['type'])->toBe('smallint')
+        ->and($columns['exit_code']['nullable'])->toBeTrue()
+        ->and($columns['duration_ms']['type'])->toBe('double precision')
+        ->and($columns['duration_ms']['nullable'])->toBeFalse()
+        ->and($columns['without_overlapping']['type'])->toBe('boolean')
+        ->and($columns['without_overlapping']['nullable'])->toBeFalse()
+        ->and($columns['without_overlapping']['default'])->toBe('false')
+        ->and($columns['on_one_server']['type'])->toBe('boolean')
+        ->and($columns['on_one_server']['nullable'])->toBeFalse()
+        ->and($columns['on_one_server']['default'])->toBe('false');
+});
+
+it('indexes scheduled task runs by task and time for the per-task run list', function (): void {
+    expect(telemetryIndexColumns('scheduled_task_runs'))->toContain('environment_id,task,recorded_at');
+});
+
 it('has no foreign key constraints on the exception group and rollup tables', function (string $table): void {
     $foreign_key_count = DB::connection('pgsql')->scalar(
         "SELECT count(*) FROM pg_constraint WHERE conrelid = ?::regclass AND contype = 'f'",
@@ -112,7 +141,7 @@ it('keeps the rollup indexes', function (string $table): void {
 it('records the schema version with its install time', function (): void {
     $row = DB::connection('pgsql')->table(TelemetrySchema::VERSIONS_TABLE)->sole();
 
-    expect(TelemetrySchema::CURRENT_VERSION)->toBe(3)
+    expect(TelemetrySchema::CURRENT_VERSION)->toBe(4)
         ->and($row->version)->toBe(TelemetrySchema::CURRENT_VERSION)
         ->and($row->installed_at)->not->toBeNull()
         ->and(collect(Schema::connection('pgsql')->getIndexes(TelemetrySchema::VERSIONS_TABLE))->firstWhere('primary', true)['columns'] ?? null)->toBe(['version']);
