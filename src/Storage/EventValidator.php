@@ -130,7 +130,8 @@ final class EventValidator
 
         $type = $event['type'] ?? null;
 
-        if (! is_string($type) || TelemetryTypeEnum::tryFrom($type) === null) {
+        // A type without contract fields (e.g. `command`, until its table and writer exist) is dropped as malformed.
+        if (! is_string($type) || TelemetryTypeEnum::tryFrom($type) === null || ! array_key_exists($type, self::FIELDS)) {
             return null;
         }
 

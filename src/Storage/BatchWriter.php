@@ -9,6 +9,7 @@ use AppWatch\Agent\Support\AgentConfiguration;
 use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Database\ConnectionResolverInterface;
+use LogicException;
 use RuntimeException;
 use Throwable;
 
@@ -38,7 +39,8 @@ final class BatchWriter
      * Store every event of the batch in its raw telemetry table for the configured environment
      * (`app-watch.environment_id`; any environment in an event is ignored).
      *
-     * Events that break the v1 contract are dropped and counted as malformed. Events whose `recorded_at`
+     * Events that break the v1 contract, or whose type has no writer yet (`command`), are dropped and
+     * counted as malformed. Events whose `recorded_at`
      * is outside [now − retention_days, now + partitions_ahead_days] have no partition, so they are dropped
      * and counted as skipped. The rest are grouped by type and written in ONE transaction on the agent's
      * connection: a database error in any type rolls back the whole batch (exception group upserts
@@ -62,7 +64,7 @@ final class BatchWriter
         $oldest_allowed = $now->subDays($this->integer('app-watch.retention_days', 14));
         $newest_allowed = $now->addDays($this->integer('app-watch.partitions_ahead_days', Schema::DEFAULT_PARTITIONS_AHEAD_DAYS));
 
-        $groups = array_fill_keys(array_column(TelemetryTypeEnum::cases(), 'value'), []);
+        $groups = array_fill_keys(array_keys(EventValidator::FIELDS), []);
         $malformed = 0;
         $skipped = 0;
 
@@ -117,6 +119,7 @@ final class BatchWriter
             TelemetryTypeEnum::Cache => $this->cache_event_writer,
             TelemetryTypeEnum::Log => $this->log_event_writer,
             TelemetryTypeEnum::Exception => $this->exception_event_writer,
+            TelemetryTypeEnum::Command => throw new LogicException('Command events have no writer yet; EventValidator drops them.'),
         };
     }
 

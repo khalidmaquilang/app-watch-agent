@@ -16,4 +16,5 @@ enum TelemetryTypeEnum: string
     case Cache = 'cache';
     case Log = 'log';
     case Exception = 'exception';
+    case Command = 'command';
 }

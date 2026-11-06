@@ -113,8 +113,8 @@ final class Recorder
 
     /**
      * Apply sampling and the ignore rules. Exceptions are always sampled, even in an unsampled
-     * trace; events of the current unsampled trace are dropped; request and job events of the
-     * current trace follow the trace decision; everything else is sampled per type.
+     * trace; events of the current unsampled trace are dropped; request, job and command events of
+     * the current trace follow the trace decision; everything else is sampled per type.
      */
     private function shouldRecord(EventPayload $event): bool
     {
@@ -127,7 +127,7 @@ final class Recorder
                 return false;
             }
 
-            $is_trace_root = in_array($type, [TelemetryTypeEnum::Request, TelemetryTypeEnum::Job], true);
+            $is_trace_root = in_array($type, [TelemetryTypeEnum::Request, TelemetryTypeEnum::Job, TelemetryTypeEnum::Command], true);
 
             if (! ($is_current_trace && $is_trace_root) && ! $this->sampler->shouldSample($type)) {
                 return false;

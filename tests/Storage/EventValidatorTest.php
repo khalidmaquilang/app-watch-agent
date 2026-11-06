@@ -71,6 +71,7 @@ it('rejects an event that breaks the contract', function (mixed $event): void {
 })->with([
     'not an array' => fn (): string => 'foo',
     'unknown type' => fn (): array => storageEvent('job', ['type' => 'span']),
+    'command type without contract fields yet' => fn (): array => storageEvent('job', ['type' => 'command']),
     'missing type' => fn (): array => Arr::except(fixtureEvent('query'), 'type'),
     'a type that is not a scalar' => fn (): array => storageEvent('request', ['type' => ['request']]),
     'an integer type' => fn (): array => storageEvent('request', ['type' => 1]),

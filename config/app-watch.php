@@ -159,9 +159,14 @@ return [
     |--------------------------------------------------------------------------
     |
     | Request paths (globs), job class names (globs) and SQL regexes that are
-    | never recorded. The agent's own `app-watch:*` commands and queries on its
-    | telemetry connection (unless it is also the app's default connection)
-    | are never recorded either.
+    | never recorded. Queries on the agent's telemetry connection (unless it is
+    | also the app's default connection) are never recorded either.
+    |
+    | `commands` are Artisan command names (globs) that get no trace and no
+    | command record. The defaults skip the agent's own `app-watch:*` upkeep
+    | and the long-running workers (queue workers, the scheduler, Horizon and
+    | Octane), whose work is traced per job or request instead. Commands the
+    | scheduler starts are recorded; only `schedule:*` itself is skipped.
     |
     */
 
@@ -169,6 +174,7 @@ return [
         'paths' => ['/up', '/telescope*', '/horizon*'],
         'jobs' => [],
         'queries' => [],
+        'commands' => ['app-watch:*', 'queue:work', 'queue:listen', 'schedule:*', 'horizon*', 'octane:*'],
     ],
 
     /*

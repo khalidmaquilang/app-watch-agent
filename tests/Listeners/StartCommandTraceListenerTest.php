@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use AppWatch\Agent\Support\TraceContext;
+use Illuminate\Console\Events\CommandFinished;
 use Illuminate\Console\Events\CommandStarting;
 use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Output\NullOutput;
@@ -24,12 +25,41 @@ it('starts a sampled trace for an artisan command', function (): void {
 });
 
 it('starts a new trace for every command', function (): void {
-    event(new CommandStarting('orders:sync', new ArrayInput([]), new NullOutput));
+    $input = new ArrayInput([]);
+    event(new CommandStarting('orders:sync', $input, new NullOutput));
     $first_trace_id = $this->trace_context->traceId();
+    event(new CommandFinished('orders:sync', $input, new NullOutput, 0));
 
     event(new CommandStarting('orders:sync', new ArrayInput([]), new NullOutput));
 
     expect($this->trace_context->traceId())->not->toBe($first_trace_id);
+});
+
+it('keeps the running command\'s trace for a command started inside it', function (): void {
+    event(new CommandStarting('orders:sync', new ArrayInput([]), new NullOutput));
+    $outer_trace_id = $this->trace_context->traceId();
+
+    event(new CommandStarting('orders:prune', new ArrayInput([]), new NullOutput));
+
+    expect($this->trace_context->traceId())->toBe($outer_trace_id);
+});
+
+it('takes the ignored commands from app-watch.ignore.commands', function (): void {
+    config(['app-watch.ignore.commands' => ['orders:*']]);
+
+    event(new CommandStarting('orders:sync', new ArrayInput([]), new NullOutput));
+    expect($this->trace_context->traceId())->toBeNull();
+
+    event(new CommandStarting('horizon:fixture', new ArrayInput([]), new NullOutput));
+    expect($this->trace_context->traceId())->not->toBeNull();
+});
+
+it('traces every command once the ignore list is emptied', function (): void {
+    config(['app-watch.ignore.commands' => []]);
+
+    event(new CommandStarting('queue:work', new ArrayInput([]), new NullOutput));
+
+    expect($this->trace_context->traceId())->not->toBeNull();
 });
 
 it('does not trace long-running commands', function (string $command): void {

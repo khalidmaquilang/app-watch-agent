@@ -132,8 +132,9 @@ In the published `config/app-watch.php`:
 - `ignore.paths` — request path globs (default `/up`, `/telescope*`, `/horizon*`).
 - `ignore.jobs` — job class name globs.
 - `ignore.queries` — SQL regexes, e.g. `'/^select \* from "sessions"/'`.
+- `ignore.commands` — Artisan command name globs that get no trace and no command record (default `app-watch:*`, `queue:work`, `queue:listen`, `schedule:*`, `horizon*`, `octane:*`). Commands the scheduler starts are recorded; only `schedule:*` itself is skipped.
 
-The agent's own commands (`app-watch:*`) and every query on its telemetry connection (`APP_WATCH_DB_CONNECTION`) are never recorded, unless that connection is also the app's default one (e.g. `APP_WATCH_DB_CONNECTION=pgsql`), whose app queries are still recorded. An app command that queries the dedicated `app_watch` connection itself is therefore not recorded on that connection either.
+The agent's own commands (`app-watch:*`, unless removed from `ignore.commands`) and every query on its telemetry connection (`APP_WATCH_DB_CONNECTION`) are never recorded, unless that connection is also the app's default one (e.g. `APP_WATCH_DB_CONNECTION=pgsql`), whose app queries are still recorded. An app command that queries the dedicated `app_watch` connection itself is therefore not recorded on that connection either.
 
 ## Running the daemon
 
@@ -238,15 +239,18 @@ The agent writes `recorded_at` as UTC `timestamptz` values, partitions are UTC d
 
 No code changes are needed. Each request, queued job run and console command is one trace; its events are flushed to the daemon when it ends.
 
-| Type              | Source                                                       |
-| ----------------- | ------------------------------------------------------------ |
-| Requests          | `RequestHandled`                                             |
-| Queries           | `QueryExecuted` (SQL normalized)                             |
-| Jobs              | `JobProcessing` / `JobProcessed` / `JobFailed` / releases    |
-| Outgoing requests | HTTP client `RequestSending` / `ResponseReceived` / failures |
-| Cache             | Hits, misses, writes, forgets                                |
-| Logs              | `MessageLogged` at or above `APP_WATCH_LOG_LEVEL`            |
-| Exceptions        | The exception handler's reportable callbacks                 |
+| Type              | Source                                                                               |
+| ----------------- | ------------------------------------------------------------------------------------ |
+| Requests          | `RequestHandled`                                                                     |
+| Queries           | `QueryExecuted` (SQL normalized)                                                     |
+| Jobs              | `JobProcessing` / `JobProcessed` / `JobFailed` / releases                            |
+| Commands          | `CommandStarting` / `CommandFinished`: name, exit code, duration, redacted arguments |
+| Outgoing requests | HTTP client `RequestSending` / `ResponseReceived` / failures                         |
+| Cache             | Hits, misses, writes, forgets                                                        |
+| Logs              | `MessageLogged` at or above `APP_WATCH_LOG_LEVEL`                                    |
+| Exceptions        | The exception handler's reportable callbacks                                         |
+
+Command arguments and options keep their names only: every value is stored as `?` (a set flag as `true`), so passwords, tokens or emails passed on the command line are never recorded. A command called from inside another command (`Artisan::call()`) is recorded as its own command event on the outer command's trace. Commands matching `ignore.commands` (by default `app-watch:*`, `queue:work`, `queue:listen`, `schedule:*`, `horizon*`, `octane:*`) get no trace and no record.
 
 ## Troubleshooting
 

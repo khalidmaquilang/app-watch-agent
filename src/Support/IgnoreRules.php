@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AppWatch\Agent\Support;
 
 use AppWatch\Agent\Enums\LogLevelEnum;
+use AppWatch\Agent\Payloads\CommandEventPayload;
 use AppWatch\Agent\Payloads\EventPayload;
 use AppWatch\Agent\Payloads\JobEventPayload;
 use AppWatch\Agent\Payloads\LogEventPayload;
@@ -14,7 +15,7 @@ use Illuminate\Contracts\Config\Repository;
 use Illuminate\Support\Str;
 
 /**
- * The configured `ignore` rules (paths, job classes, query regexes) and the `log_level` threshold.
+ * The configured `ignore` rules (paths, job classes, query regexes, command names) and the `log_level` threshold.
  */
 final readonly class IgnoreRules
 {
@@ -35,6 +36,7 @@ final readonly class IgnoreRules
             $event instanceof JobEventPayload => $this->shouldIgnoreJob($event->job_class),
             $event instanceof QueryEventPayload => $this->shouldIgnoreQuery($event->sql),
             $event instanceof LogEventPayload => $this->shouldIgnoreLogLevel($event->level),
+            $event instanceof CommandEventPayload => $this->shouldIgnoreCommand($event->command),
             default => false,
         };
     }
@@ -64,6 +66,20 @@ final readonly class IgnoreRules
 
         foreach ($this->patterns('jobs') as $pattern) {
             if (Str::is(ltrim($pattern, '\\'), $normalized_class)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Whether the Artisan command name matches an `ignore.commands` glob.
+     */
+    public function shouldIgnoreCommand(string $name): bool
+    {
+        foreach ($this->patterns('commands') as $pattern) {
+            if (Str::is($pattern, $name)) {
                 return true;
             }
         }

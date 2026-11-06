@@ -3,6 +3,8 @@
 declare(strict_types=1);
 
 use AppWatch\Agent\Enums\LogLevelEnum;
+use AppWatch\Agent\Payloads\CommandEventPayload;
+use AppWatch\Agent\Payloads\EventMetadata;
 use AppWatch\Agent\Support\IgnoreRules;
 
 beforeEach(function (): void {
@@ -60,3 +62,27 @@ it('falls back to warning for an unknown log level', function (): void {
 it('never ignores exceptions', function (): void {
     expect($this->rules->shouldIgnore(exceptionEvent('t')))->toBeFalse();
 });
+
+it('ignores the default long-running and agent commands', function (string $name): void {
+    expect($this->rules->shouldIgnoreCommand($name))->toBeTrue();
+})->with(['app-watch:agent', 'queue:work', 'queue:listen', 'schedule:run', 'schedule:work', 'horizon', 'horizon:supervisor', 'octane:start']);
+
+it('records other commands by default, the scheduler\'s children included', function (string $name): void {
+    expect($this->rules->shouldIgnoreCommand($name))->toBeFalse();
+})->with(['orders:sync', 'queue:retry', 'list', 'inspire']);
+
+it('ignores configured command globs and command events', function (): void {
+    config(['app-watch.ignore.commands' => ['orders:*', '', 42]]);
+
+    $event = new CommandEventPayload(EventMetadata::capture('t'), 'orders:sync', [], 0, 1.0);
+
+    expect($this->rules->shouldIgnoreCommand('orders:sync'))->toBeTrue()
+        ->and($this->rules->shouldIgnore($event))->toBeTrue()
+        ->and($this->rules->shouldIgnoreCommand('queue:work'))->toBeFalse();
+});
+
+it('ignores no command when the list is empty or not a list', function (mixed $commands): void {
+    config(['app-watch.ignore.commands' => $commands]);
+
+    expect($this->rules->shouldIgnoreCommand('app-watch:agent'))->toBeFalse();
+})->with([[[]], [null], ['app-watch:*']]);

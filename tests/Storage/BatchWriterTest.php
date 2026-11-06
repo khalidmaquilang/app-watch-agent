@@ -162,6 +162,26 @@ it('counts malformed events and stores the rest of the batch', function (): void
         ]);
 });
 
+it('drops and counts a command event, which has no writer yet, without failing the batch', function (): void {
+    $command_event = [
+        ...array_intersect_key(fixtureEvent('job'), array_flip(['trace_id', 'recorded_at', 'host', 'deploy'])),
+        'type' => 'command',
+        'command' => 'orders:sync',
+        'arguments' => ['email' => '?'],
+        'exit_code' => 0,
+        'duration_ms' => 12.5,
+        'failed' => false,
+    ];
+
+    $stats = $this->writer->write([$command_event, storageEvent('request')]);
+
+    expect($stats->malformed)->toBe(1)
+        ->and($stats->stored)->not->toHaveKey('command')
+        ->and($stats->stored['request'])->toBe(1)
+        ->and($stats->storedCount())->toBe(1)
+        ->and(storedRequestPaths())->toHaveCount(1);
+});
+
 it('opens no transaction and runs no query when nothing is storable', function (): void {
     $queries = 0;
     DB::connection('app_watch')->listen(function () use (&$queries): void {

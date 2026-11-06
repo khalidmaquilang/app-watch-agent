@@ -11,6 +11,7 @@ use AppWatch\Agent\Console\RollupsCommand;
 use AppWatch\Agent\Http\Middleware\StartRequestTraceMiddleware;
 use AppWatch\Agent\Listeners\FlushTraceListener;
 use AppWatch\Agent\Listeners\RecordCacheListener;
+use AppWatch\Agent\Listeners\RecordCommandListener;
 use AppWatch\Agent\Listeners\RecordExceptionListener;
 use AppWatch\Agent\Listeners\RecordJobListener;
 use AppWatch\Agent\Listeners\RecordLogListener;
@@ -117,6 +118,7 @@ class AppWatchAgentServiceProvider extends ServiceProvider
         $this->app->singleton(ExceptionEventWriter::class);
         $this->app->singleton(BatchWriter::class);
         $this->app->singleton(RecordJobListener::class);
+        $this->app->singleton(RecordCommandListener::class);
         $this->app->singleton(RecordQueryListener::class);
         $this->app->singleton(RecordOutgoingRequestListener::class);
         $this->app->singleton(LogContextSanitizer::class);
@@ -246,8 +248,8 @@ class AppWatchAgentServiceProvider extends ServiceProvider
     }
 
     /**
-     * Start traces for requests, jobs and commands, and record request, job, query, outgoing
-     * request, cache and log events, and flush each trace's events to the transport when the
+     * Start traces for requests, jobs and commands, and record request, job, command, query,
+     * outgoing request, cache and log events, and flush each trace's events to the transport when the
      * request, job run or command ends.
      */
     protected function registerTracing(): void
@@ -268,7 +270,9 @@ class AppWatchAgentServiceProvider extends ServiceProvider
         $events = $this->app->make(Dispatcher::class);
 
         $events->listen(RequestHandled::class, RecordRequestListener::class);
+        // The command's trace starts before its run is remembered under it.
         $events->listen(CommandStarting::class, StartCommandTraceListener::class);
+        $events->listen(CommandStarting::class, [RecordCommandListener::class, 'handleCommandStarting']);
         $events->listen(JobProcessing::class, [RecordJobListener::class, 'handleJobProcessing']);
         $events->listen(JobProcessed::class, [RecordJobListener::class, 'handleJobProcessed']);
         $events->listen(JobFailed::class, [RecordJobListener::class, 'handleJobFailed']);
@@ -284,6 +288,8 @@ class AppWatchAgentServiceProvider extends ServiceProvider
         $events->listen(ConnectionFailed::class, [RecordOutgoingRequestListener::class, 'handleConnectionFailed']);
         $events->listen([CacheHit::class, CacheMissed::class, KeyWritten::class, KeyForgotten::class], RecordCacheListener::class);
         $events->listen(MessageLogged::class, RecordLogListener::class);
+        // The command event must be buffered before the trace flushes.
+        $events->listen(CommandFinished::class, [RecordCommandListener::class, 'handleCommandFinished']);
         $events->listen(CommandFinished::class, FlushTraceListener::class);
 
         $this->app->terminating(function (): void {

@@ -12,7 +12,7 @@ final readonly class WriteStats
     /**
      * The stored row count per event type and the events that were dropped.
      *
-     * @param  array<string, int>  $stored  keyed by TelemetryTypeEnum value, every type present (0 when none)
+     * @param  array<string, int>  $stored  keyed by TelemetryTypeEnum value, every type with a writer present (0 when none)
      * @param  int  $skipped_retention  events outside [now − retention_days, now + partitions_ahead_days]
      * @param  int  $malformed  events that broke the v1 contract
      */
