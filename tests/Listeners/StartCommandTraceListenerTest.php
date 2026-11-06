@@ -5,6 +5,9 @@ declare(strict_types=1);
 use AppWatch\Agent\Support\TraceContext;
 use Illuminate\Console\Events\CommandFinished;
 use Illuminate\Console\Events\CommandStarting;
+use Illuminate\Console\Events\ScheduledTaskStarting;
+use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Support\Str;
 use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Output\NullOutput;
 
@@ -87,4 +90,25 @@ it('still traces an app command after an agent command', function (): void {
     event(new CommandStarting('inspire', new ArrayInput([]), new NullOutput));
 
     expect($this->trace_context->traceId())->not->toBeNull();
+});
+
+it('joins the trace a parent process handed in, e.g. the scheduler of this command', function (): void {
+    $parent_trace_id = Str::uuid7()->toString();
+    TraceContext::exportParentTraceId($parent_trace_id);
+
+    event(new CommandStarting('orders:sync', new ArrayInput([]), new NullOutput));
+
+    expect($this->trace_context->traceId())->toBe($parent_trace_id)
+        ->and(getenv(TraceContext::PARENT_TRACE_ID_ENV))->toBeFalse();
+});
+
+it('keeps the trace of a scheduled task running in this process for a command it calls', function (): void {
+    $task = app(Schedule::class)->call(static fn () => null);
+    event(new ScheduledTaskStarting($task));
+    $task_trace_id = $this->trace_context->traceId();
+
+    event(new CommandStarting('orders:sync', new ArrayInput([]), new NullOutput));
+
+    expect($task_trace_id)->not->toBeNull()
+        ->and($this->trace_context->traceId())->toBe($task_trace_id);
 });

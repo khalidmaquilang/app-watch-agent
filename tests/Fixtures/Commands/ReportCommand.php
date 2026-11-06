@@ -17,7 +17,7 @@ class ReportCommand extends Command
     /**
      * {@inheritDoc}
      */
-    protected $signature = 'fixture:report {email} {--token=} {--exit=} {--throw} {--call=} {--dry-run}';
+    protected $signature = 'fixture:report {email?} {--token=} {--exit=} {--throw} {--call=} {--dry-run}';
 
     /**
      * {@inheritDoc}

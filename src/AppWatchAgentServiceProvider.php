@@ -18,6 +18,7 @@ use AppWatch\Agent\Listeners\RecordLogListener;
 use AppWatch\Agent\Listeners\RecordOutgoingRequestListener;
 use AppWatch\Agent\Listeners\RecordQueryListener;
 use AppWatch\Agent\Listeners\RecordRequestListener;
+use AppWatch\Agent\Listeners\RecordScheduledTaskListener;
 use AppWatch\Agent\Listeners\StartCommandTraceListener;
 use AppWatch\Agent\Maintenance\BuildHourRollups;
 use AppWatch\Agent\Maintenance\BuildMinuteRollups;
@@ -57,6 +58,10 @@ use Illuminate\Cache\Events\KeyWritten;
 use Illuminate\Cache\NullStore;
 use Illuminate\Console\Events\CommandFinished;
 use Illuminate\Console\Events\CommandStarting;
+use Illuminate\Console\Events\ScheduledTaskFailed;
+use Illuminate\Console\Events\ScheduledTaskFinished;
+use Illuminate\Console\Events\ScheduledTaskSkipped;
+use Illuminate\Console\Events\ScheduledTaskStarting;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Cache\Factory as CacheFactory;
 use Illuminate\Contracts\Cache\LockProvider;
@@ -121,6 +126,7 @@ class AppWatchAgentServiceProvider extends ServiceProvider
         $this->app->singleton(BatchWriter::class);
         $this->app->singleton(RecordJobListener::class);
         $this->app->singleton(RecordCommandListener::class);
+        $this->app->singleton(RecordScheduledTaskListener::class);
         $this->app->singleton(RecordQueryListener::class);
         $this->app->singleton(RecordOutgoingRequestListener::class);
         $this->app->singleton(LogContextSanitizer::class);
@@ -250,9 +256,9 @@ class AppWatchAgentServiceProvider extends ServiceProvider
     }
 
     /**
-     * Start traces for requests, jobs and commands, and record request, job, command, query,
-     * outgoing request, cache and log events, and flush each trace's events to the transport when the
-     * request, job run or command ends.
+     * Start traces for requests, jobs, commands and scheduled task runs, and record request, job,
+     * command, scheduled task, query, outgoing request, cache and log events, and flush each trace's
+     * events to the transport when the request, job run, command or scheduled task run ends.
      */
     protected function registerTracing(): void
     {
@@ -293,6 +299,11 @@ class AppWatchAgentServiceProvider extends ServiceProvider
         // The command event must be buffered before the trace flushes.
         $events->listen(CommandFinished::class, [RecordCommandListener::class, 'handleCommandFinished']);
         $events->listen(CommandFinished::class, FlushTraceListener::class);
+        // The scheduled task listener flushes (and ends) each run's trace itself once it is recorded.
+        $events->listen(ScheduledTaskStarting::class, [RecordScheduledTaskListener::class, 'handleStarting']);
+        $events->listen(ScheduledTaskFinished::class, [RecordScheduledTaskListener::class, 'handleFinished']);
+        $events->listen(ScheduledTaskSkipped::class, [RecordScheduledTaskListener::class, 'handleSkipped']);
+        $events->listen(ScheduledTaskFailed::class, [RecordScheduledTaskListener::class, 'handleFailed']);
 
         $this->app->terminating(function (): void {
             $this->app->make(FlushTraceListener::class)->handle();

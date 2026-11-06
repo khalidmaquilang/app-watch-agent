@@ -133,6 +133,7 @@ In the published `config/app-watch.php`:
 - `ignore.jobs` — job class name globs.
 - `ignore.queries` — SQL regexes, e.g. `'/^select \* from "sessions"/'`.
 - `ignore.commands` — Artisan command name globs that get no trace and no command record (default `app-watch:*`, `queue:work`, `queue:listen`, `schedule:*`, `horizon*`, `octane:*`). Commands the scheduler starts are recorded; only `schedule:*` itself is skipped.
+- `ignore.scheduled_tasks` — scheduled task globs, matched against the task as recorded (e.g. `emails:send --force`, a job class or a closure's description; default `app-watch:*`).
 
 The agent's own commands (`app-watch:*`, unless removed from `ignore.commands`) and every query on its telemetry connection (`APP_WATCH_DB_CONNECTION`) are never recorded, unless that connection is also the app's default one (e.g. `APP_WATCH_DB_CONNECTION=pgsql`), whose app queries are still recorded. An app command that queries the dedicated `app_watch` connection itself is therefore not recorded on that connection either.
 
@@ -245,6 +246,7 @@ No code changes are needed. Each request, queued job run and console command is 
 | Queries           | `QueryExecuted` (SQL normalized)                                                     | `queries`                                               |
 | Jobs              | `JobProcessing` / `JobProcessed` / `JobFailed` / releases                            | `job_runs`                                              |
 | Commands          | `CommandStarting` / `CommandFinished`: name, exit code, duration, redacted arguments | `command_runs`                                          |
+| Scheduled tasks   | `ScheduledTaskStarting` / `Finished` / `Skipped` / `Failed`: task, cron, outcome     | — (dropped until its table lands)                       |
 | Outgoing requests | HTTP client `RequestSending` / `ResponseReceived` / failures                         | `outgoing_requests`                                     |
 | Cache             | Hits, misses, writes, forgets                                                        | `cache_events`                                          |
 | Logs              | `MessageLogged` at or above `APP_WATCH_LOG_LEVEL`                                    | `logs`                                                  |
@@ -253,6 +255,8 @@ No code changes are needed. Each request, queued job run and console command is 
 Every table except `exception_groups` is partitioned per UTC day and expires through [partition upkeep](#partition-upkeep). Requests, queries, jobs, commands, outgoing requests and cache events are also rolled up per minute and hour (commands per command name, failed runs counted as errors).
 
 Command arguments and options keep their names only: every value is stored as `?` (a set flag as `true`), so passwords, tokens or emails passed on the command line are never recorded. A command called from inside another command (`Artisan::call()`) is recorded as its own command event on the outer command's trace. Commands matching `ignore.commands` (by default `app-watch:*`, `queue:work`, `queue:listen`, `schedule:*`, `horizon*`, `octane:*`) get no trace and no record.
+
+Each scheduled task run (`schedule:run` / `schedule:work`) is recorded with its task (the command or shell command with every argument value stored as `?`, the job class, or the closure's description), kind (`command`, `job`, `closure`, `exec`), cron expression and timezone, outcome (`succeeded`, `failed` or `skipped`; filters, a held `withoutOverlapping` mutex and `onOneServer` count as skipped), duration, exit code and host, as the root of its own trace. The scheduler hands that trace id to a command or exec task's child process in `APP_WATCH_PARENT_TRACE_ID`, so the command run the child records joins the same trace, while `->call()` and `->job()` tasks run on it in-process. Tasks matching `ignore.scheduled_tasks` (default `app-watch:*`) are not recorded.
 
 ## Troubleshooting
 

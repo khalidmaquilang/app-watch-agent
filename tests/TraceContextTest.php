@@ -161,3 +161,43 @@ it('captures the default database connection when a trace starts and restores it
     $context->end();
     expect($context->defaultConnection())->toBeNull();
 });
+
+it('adopts a well-formed trace id handed in by a parent process and clears it', function (): void {
+    $parent_trace_id = Str::uuid7()->toString();
+    TraceContext::exportParentTraceId($parent_trace_id);
+
+    $context = app(TraceContext::class);
+
+    expect($context->start(TelemetryTypeEnum::Command))->toBe($parent_trace_id)
+        ->and($context->traceId())->toBe($parent_trace_id)
+        ->and(getenv(TraceContext::PARENT_TRACE_ID_ENV))->toBeFalse()
+        ->and($_SERVER)->not->toHaveKey(TraceContext::PARENT_TRACE_ID_ENV)
+        ->and($context->start(TelemetryTypeEnum::Command))->not->toBe($parent_trace_id);
+});
+
+it('rejects a malformed parent trace id, clears it and starts a new trace', function (string $value): void {
+    putenv(TraceContext::PARENT_TRACE_ID_ENV.'='.$value);
+
+    $trace_id = app(TraceContext::class)->start(TelemetryTypeEnum::Command);
+
+    expect($trace_id)->not->toBe($value)
+        ->and(Uuid::fromString((string) $trace_id)->getFields()->getVersion())->toBe(7)
+        ->and(getenv(TraceContext::PARENT_TRACE_ID_ENV))->toBeFalse();
+})->with([
+    'empty' => '',
+    'not a uuid' => 'abc; rm -rf /',
+    'uuid v4' => '0b7f6c1e-3d4a-4f2b-9c8d-1e2f3a4b5c6d',
+    'uppercase v7' => '019A4E5C-1B2C-7D3E-8F40-5A6B7C8D9E0F',
+]);
+
+it('leaves the parent trace id alone for a nested trace', function (): void {
+    $parent_trace_id = Str::uuid7()->toString();
+    TraceContext::exportParentTraceId($parent_trace_id);
+
+    $nested_trace_id = app(TraceContext::class)->startNested(TelemetryTypeEnum::Job);
+
+    expect($nested_trace_id)->not->toBe($parent_trace_id)
+        ->and(getenv(TraceContext::PARENT_TRACE_ID_ENV))->toBe($parent_trace_id);
+
+    TraceContext::clearParentTraceId();
+});

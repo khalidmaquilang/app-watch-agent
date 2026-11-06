@@ -3,8 +3,11 @@
 declare(strict_types=1);
 
 use AppWatch\Agent\Enums\LogLevelEnum;
+use AppWatch\Agent\Enums\ScheduledTaskKindEnum;
+use AppWatch\Agent\Enums\ScheduledTaskOutcomeEnum;
 use AppWatch\Agent\Payloads\CommandEventPayload;
 use AppWatch\Agent\Payloads\EventMetadata;
+use AppWatch\Agent\Payloads\ScheduledTaskEventPayload;
 use AppWatch\Agent\Support\IgnoreRules;
 
 beforeEach(function (): void {
@@ -85,4 +88,31 @@ it('ignores no command when the list is empty or not a list', function (mixed $c
     config(['app-watch.ignore.commands' => $commands]);
 
     expect($this->rules->shouldIgnoreCommand('app-watch:agent'))->toBeFalse();
+})->with([[[]], [null], ['app-watch:*']]);
+
+it('ignores the agent\'s own app-watch:* scheduled tasks by default and records the rest', function (): void {
+    expect($this->rules->shouldIgnoreScheduledTask('app-watch:rollups minute'))->toBeTrue()
+        ->and($this->rules->shouldIgnoreScheduledTask('app-watch:partitions'))->toBeTrue()
+        ->and($this->rules->shouldIgnoreScheduledTask('emails:send --force'))->toBeFalse()
+        ->and($this->rules->shouldIgnoreScheduledTask('Closure'))->toBeFalse();
+});
+
+it('ignores configured scheduled task globs and scheduled task events', function (): void {
+    config(['app-watch.ignore.scheduled_tasks' => ['emails:*', 'App\\Jobs\\*', '', 42]]);
+
+    $event = new ScheduledTaskEventPayload(
+        EventMetadata::capture('t'), 'emails:send --force', ScheduledTaskKindEnum::Command, '* * * * *', null,
+        ScheduledTaskOutcomeEnum::Succeeded, 1.0, 0, false, false,
+    );
+
+    expect($this->rules->shouldIgnoreScheduledTask('emails:send --force'))->toBeTrue()
+        ->and($this->rules->shouldIgnore($event))->toBeTrue()
+        ->and($this->rules->shouldIgnoreScheduledTask('App\\Jobs\\PruneJob'))->toBeTrue()
+        ->and($this->rules->shouldIgnoreScheduledTask('app-watch:rollups minute'))->toBeFalse();
+});
+
+it('ignores no scheduled task when the list is empty or not a list', function (mixed $tasks): void {
+    config(['app-watch.ignore.scheduled_tasks' => $tasks]);
+
+    expect($this->rules->shouldIgnoreScheduledTask('app-watch:rollups minute'))->toBeFalse();
 })->with([[[]], [null], ['app-watch:*']]);

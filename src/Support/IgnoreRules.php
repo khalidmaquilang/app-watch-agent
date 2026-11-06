@@ -11,11 +11,12 @@ use AppWatch\Agent\Payloads\JobEventPayload;
 use AppWatch\Agent\Payloads\LogEventPayload;
 use AppWatch\Agent\Payloads\QueryEventPayload;
 use AppWatch\Agent\Payloads\RequestEventPayload;
+use AppWatch\Agent\Payloads\ScheduledTaskEventPayload;
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Support\Str;
 
 /**
- * The configured `ignore` rules (paths, job classes, query regexes, command names) and the `log_level` threshold.
+ * The configured `ignore` rules (paths, job classes, query regexes, command names, scheduled tasks) and the `log_level` threshold.
  */
 final readonly class IgnoreRules
 {
@@ -37,6 +38,7 @@ final readonly class IgnoreRules
             $event instanceof QueryEventPayload => $this->shouldIgnoreQuery($event->sql),
             $event instanceof LogEventPayload => $this->shouldIgnoreLogLevel($event->level),
             $event instanceof CommandEventPayload => $this->shouldIgnoreCommand($event->command),
+            $event instanceof ScheduledTaskEventPayload => $this->shouldIgnoreScheduledTask($event->task),
             default => false,
         };
     }
@@ -80,6 +82,21 @@ final readonly class IgnoreRules
     {
         foreach ($this->patterns('commands') as $pattern) {
             if (Str::is($pattern, $name)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Whether the scheduled task (its command, job class, description or shell command, as recorded)
+     * matches an `ignore.scheduled_tasks` glob.
+     */
+    public function shouldIgnoreScheduledTask(string $task): bool
+    {
+        foreach ($this->patterns('scheduled_tasks') as $pattern) {
+            if (Str::is($pattern, $task)) {
                 return true;
             }
         }

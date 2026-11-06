@@ -17,4 +17,5 @@ enum TelemetryTypeEnum: string
     case Log = 'log';
     case Exception = 'exception';
     case Command = 'command';
+    case ScheduledTask = 'scheduled_task';
 }

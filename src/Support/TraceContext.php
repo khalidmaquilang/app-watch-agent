@@ -24,6 +24,12 @@ final class TraceContext
     public const int MAX_NESTING_DEPTH = 16;
 
     /**
+     * The environment variable a parent process (the scheduler) passes its trace id in, so a child
+     * process (the scheduled command) joins that trace instead of starting its own.
+     */
+    public const string PARENT_TRACE_ID_ENV = 'APP_WATCH_PARENT_TRACE_ID';
+
+    /**
      * The current trace id, null outside a trace.
      */
     private ?string $trace_id = null;
@@ -64,17 +70,70 @@ final class TraceContext
      * Start a new trace, forgetting any current or suspended trace, and return its id (null if it
      * could not start). Request and job traces are sampled once here, so the trace is recorded
      * all-or-nothing; any other root (null, e.g. a console command) is always sampled. An ignored
-     * trace (e.g. an ignored path) is never sampled.
+     * trace (e.g. an ignored path) is never sampled. A well-formed trace id handed in by a parent
+     * process (PARENT_TRACE_ID_ENV) becomes the new trace's id; the variable is cleared either way,
+     * so it reaches neither a later trace nor this process's own children.
      */
     public function start(?TelemetryTypeEnum $root_type = null, bool $ignored = false): ?string
     {
         $this->parents = [];
 
-        return $this->begin($root_type, $ignored);
+        return $this->begin($root_type, $ignored, self::takeParentTraceId());
+    }
+
+    /**
+     * Whether the value is a trace id this agent generates: a lowercase uuid v7.
+     *
+     * @phpstan-assert-if-true string $value
+     */
+    public static function isValidTraceId(mixed $value): bool
+    {
+        return is_string($value) && preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/', $value) === 1;
+    }
+
+    /**
+     * Hand the trace id to the child processes this process starts from now on (Symfony Process
+     * inherits variables that are in both getenv() and $_SERVER).
+     */
+    public static function exportParentTraceId(string $trace_id): void
+    {
+        putenv(self::PARENT_TRACE_ID_ENV.'='.$trace_id);
+        $_SERVER[self::PARENT_TRACE_ID_ENV] = $trace_id;
+        $_ENV[self::PARENT_TRACE_ID_ENV] = $trace_id;
+    }
+
+    /**
+     * Stop handing a trace id to child processes.
+     */
+    public static function clearParentTraceId(): void
+    {
+        putenv(self::PARENT_TRACE_ID_ENV);
+        unset($_SERVER[self::PARENT_TRACE_ID_ENV], $_ENV[self::PARENT_TRACE_ID_ENV]);
+    }
+
+    /**
+     * The trace id handed in by the parent process if it is well-formed (else null), clearing it.
+     */
+    private static function takeParentTraceId(): ?string
+    {
+        $trace_id = getenv(self::PARENT_TRACE_ID_ENV);
+
+        if ($trace_id === false) {
+            $trace_id = $_SERVER[self::PARENT_TRACE_ID_ENV] ?? $_ENV[self::PARENT_TRACE_ID_ENV] ?? null;
+        }
+
+        if ($trace_id === null) {
+            return null;
+        }
+
+        self::clearParentTraceId();
+
+        return self::isValidTraceId($trace_id) ? $trace_id : null;
     }
 
     /**
      * Suspend the current trace (if any) and start a new one inside it; endNested() restores it.
+     * The new trace gets a fresh id; a parent process's id (PARENT_TRACE_ID_ENV) is left alone.
      */
     public function startNested(?TelemetryTypeEnum $root_type = null, bool $ignored = false): ?string
     {
@@ -173,12 +232,12 @@ final class TraceContext
     }
 
     /**
-     * Make a new trace current and decide its sampling.
+     * Make a new trace current (with the given id, else a new uuid v7) and decide its sampling.
      */
-    private function begin(?TelemetryTypeEnum $root_type, bool $ignored): ?string
+    private function begin(?TelemetryTypeEnum $root_type, bool $ignored, ?string $trace_id = null): ?string
     {
         try {
-            $this->trace_id = Str::uuid7()->toString();
+            $this->trace_id = $trace_id ?? Str::uuid7()->toString();
             $this->started_at = (int) hrtime(true);
             $default_connection = $this->config->get('database.default');
             $this->default_connection = is_string($default_connection) ? $default_connection : null;

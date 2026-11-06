@@ -32,6 +32,7 @@ it('merges the default config', function (): void {
         ->and(config('app-watch.sample_rates.exception'))->toBe(1.0)
         ->and(config('app-watch.ignore.paths'))->toBe(['/up', '/telescope*', '/horizon*'])
         ->and(config('app-watch.ignore.commands'))->toBe(['app-watch:*', 'queue:work', 'queue:listen', 'schedule:*', 'horizon*', 'octane:*'])
+        ->and(config('app-watch.ignore.scheduled_tasks'))->toBe(['app-watch:*'])
         ->and(config('app-watch.log_level'))->toBe('warning')
         ->and(config('app-watch.deploy'))->toBeNull()
         ->and(config('app-watch.connection'))->toBe('app_watch')
@@ -128,7 +129,7 @@ it('publishes config/app-watch.php with the app-watch-config tag', function (): 
         ->and(array_keys($published['rollups']))->toBe(['grace_minutes', 'minute_retention_days', 'hour_retention_days'])
         ->and(array_keys($published['daemon']))->toBe(['host', 'port', 'flush_events', 'flush_seconds', 'max_buffered_events', 'spool_path', 'spool_max_bytes'])
         ->and(array_keys($published['sample_rates']))->toBe(['request', 'query', 'job', 'outgoing_request', 'cache', 'log', 'exception'])
-        ->and(array_keys($published['ignore']))->toBe(['paths', 'jobs', 'queries', 'commands']);
+        ->and(array_keys($published['ignore']))->toBe(['paths', 'jobs', 'queries', 'commands', 'scheduled_tasks']);
 });
 
 it('runs the suite on the Postgres app_watch_agent_testing database', function (): void {

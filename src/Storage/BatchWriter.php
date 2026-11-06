@@ -9,6 +9,7 @@ use AppWatch\Agent\Support\AgentConfiguration;
 use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Database\ConnectionResolverInterface;
+use LogicException;
 use RuntimeException;
 use Throwable;
 
@@ -39,7 +40,8 @@ final class BatchWriter
      * Store every event of the batch in its raw telemetry table for the configured environment
      * (`app-watch.environment_id`; any environment in an event is ignored).
      *
-     * Events that break the v1 contract are dropped and counted as malformed. Events whose `recorded_at`
+     * Events that break the v1 contract, or whose type has no writer yet (`scheduled_task`), are dropped
+     * and counted as malformed. Events whose `recorded_at`
      * is outside [now − retention_days, now + partitions_ahead_days] have no partition, so they are dropped
      * and counted as skipped. The rest are grouped by type and written in ONE transaction on the agent's
      * connection: a database error in any type rolls back the whole batch (exception group upserts
@@ -119,6 +121,7 @@ final class BatchWriter
             TelemetryTypeEnum::Log => $this->log_event_writer,
             TelemetryTypeEnum::Exception => $this->exception_event_writer,
             TelemetryTypeEnum::Command => $this->command_event_writer,
+            TelemetryTypeEnum::ScheduledTask => throw new LogicException('Scheduled task events have no writer yet; EventValidator drops them.'),
         };
     }
 

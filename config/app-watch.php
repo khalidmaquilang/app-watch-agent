@@ -169,6 +169,11 @@ return [
     | Octane), whose work is traced per job or request instead. Commands the
     | scheduler starts are recorded; only `schedule:*` itself is skipped.
     |
+    | `scheduled_tasks` are globs matched against a scheduled task as it is
+    | recorded (the command with its arguments, e.g. `emails:send --force`,
+    | the job class, the closure's description or the shell command). The
+    | default skips the agent's own `app-watch:*` upkeep.
+    |
     */
 
     'ignore' => [
@@ -176,6 +181,7 @@ return [
         'jobs' => [],
         'queries' => [],
         'commands' => ['app-watch:*', 'queue:work', 'queue:listen', 'schedule:*', 'horizon*', 'octane:*'],
+        'scheduled_tasks' => ['app-watch:*'],
     ],
 
     /*

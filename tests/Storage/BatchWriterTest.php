@@ -195,6 +195,30 @@ it('drops and counts a command event with an out-of-range exit code or nested ar
     'arguments with 101 keys' => [['arguments' => array_fill_keys(array_map(fn (int $index): string => "option{$index}", range(1, EventValidator::MAX_ARGUMENTS + 1)), '?')]],
 ]);
 
+it('drops and counts a scheduled_task event, which has no writer yet, without failing the batch', function (): void {
+    $scheduled_task_event = [
+        ...array_intersect_key(fixtureEvent('job'), array_flip(['trace_id', 'recorded_at', 'host', 'deploy'])),
+        'type' => 'scheduled_task',
+        'task' => 'emails:send --force',
+        'kind' => 'command',
+        'expression' => '* * * * *',
+        'timezone' => null,
+        'outcome' => 'succeeded',
+        'duration_ms' => 12.5,
+        'exit_code' => 0,
+        'without_overlapping' => false,
+        'on_one_server' => false,
+    ];
+
+    $stats = $this->writer->write([$scheduled_task_event, storageEvent('request')]);
+
+    expect($stats->malformed)->toBe(1)
+        ->and($stats->stored)->not->toHaveKey('scheduled_task')
+        ->and($stats->stored['request'])->toBe(1)
+        ->and($stats->storedCount())->toBe(1)
+        ->and(storedRequestPaths())->toHaveCount(1);
+});
+
 it('opens no transaction and runs no query when nothing is storable', function (): void {
     $queries = 0;
     DB::connection('app_watch')->listen(function () use (&$queries): void {

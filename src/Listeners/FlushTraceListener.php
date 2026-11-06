@@ -12,7 +12,8 @@ use Throwable;
 /**
  * Flushes the current trace's buffered events to the transport. Runs when the HTTP app
  * terminates, after a job run is recorded (JobProcessed / JobFailed / JobReleasedAfterException)
- * and again on JobAttempted for anything recorded after that, and when a command finishes.
+ * and again on JobAttempted for anything recorded after that, when a command finishes, and when
+ * a scheduled task run is recorded (RecordScheduledTaskListener).
  */
 final readonly class FlushTraceListener
 {
@@ -33,10 +34,20 @@ final readonly class FlushTraceListener
         try {
             $trace_id = $this->trace_context->traceId();
 
-            if ($trace_id === null) {
-                return;
+            if ($trace_id !== null) {
+                $this->flush($trace_id);
             }
+        } catch (Throwable) {
+            return;
+        }
+    }
 
+    /**
+     * Send the given trace's buffered events, if any.
+     */
+    public function flush(string $trace_id): void
+    {
+        try {
             $events = $this->recorder->flush($trace_id);
 
             if ($events !== []) {
