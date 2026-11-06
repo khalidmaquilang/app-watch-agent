@@ -39,8 +39,8 @@ function telemetryTableExists(string $table): bool
 it('drops partitions whose upper bound is at or before now - retention_days and keeps the rest', function (): void {
     $dropped = $this->drop_expired_partitions->handle(CarbonImmutable::now('UTC'), 14);
 
-    // Days today-20 … today-15 end at or before today-14 00:00 UTC: 6 days × 7 tables.
-    expect($dropped)->toBe(42);
+    // Days today-20 … today-15 end at or before today-14 00:00 UTC: 6 days × 8 tables.
+    expect($dropped)->toBe(48);
 
     foreach (Schema::PARTITIONED_TABLES as $table) {
         foreach (range(15, 20) as $days_ago) {
@@ -85,7 +85,7 @@ it('uses the UTC start of day of now whatever its timezone and the host app time
 });
 
 it('is idempotent: a second run drops nothing', function (): void {
-    expect($this->drop_expired_partitions->handle(CarbonImmutable::now('UTC'), 14))->toBe(42)
+    expect($this->drop_expired_partitions->handle(CarbonImmutable::now('UTC'), 14))->toBe(48)
         ->and($this->drop_expired_partitions->handle(CarbonImmutable::now('UTC'), 14))->toBe(0);
 });
 
@@ -119,7 +119,7 @@ it('ignores child tables that do not match the {table}_pYYYYMMDD naming scheme',
         $old_day->format('Y-m-d 00:00:00+00'),
     ));
 
-    expect($this->drop_expired_partitions->handle(CarbonImmutable::now('UTC'), 14))->toBe(42)
+    expect($this->drop_expired_partitions->handle(CarbonImmutable::now('UTC'), 14))->toBe(48)
         ->and(telemetryTableExists('requests_archive'))->toBeTrue()
         ->and(telemetryTableExists('requests_p'.$old_day->subDay()->format('Ymd').'_old'))->toBeTrue();
 });

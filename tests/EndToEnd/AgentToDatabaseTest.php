@@ -8,6 +8,7 @@ use AppWatch\Agent\Enums\CacheOperationEnum;
 use AppWatch\Agent\Enums\JobStatusEnum;
 use AppWatch\Agent\Enums\LogLevelEnum;
 use AppWatch\Agent\Payloads\CacheEventPayload;
+use AppWatch\Agent\Payloads\CommandEventPayload;
 use AppWatch\Agent\Payloads\EventMetadata;
 use AppWatch\Agent\Payloads\ExceptionEventPayload;
 use AppWatch\Agent\Payloads\JobEventPayload;
@@ -18,6 +19,7 @@ use AppWatch\Agent\Payloads\RequestEventPayload;
 use AppWatch\Agent\Recorder;
 use AppWatch\Agent\Storage\Schema;
 use AppWatch\Agent\Support\TraceContext;
+use AppWatch\Agent\Tests\Fixtures\Commands\ReportCommand;
 use AppWatch\Agent\Tests\Fixtures\Exceptions\CheckoutFailedException;
 use AppWatch\Agent\Tests\Fixtures\Jobs\TracedJob;
 use AppWatch\Agent\Tests\Support\TelemetryRows;
@@ -25,6 +27,7 @@ use AppWatch\Agent\Transport\DaemonTransport;
 use AppWatch\Agent\Transport\FakeTransport;
 use AppWatch\Agent\Transport\Transport;
 use Carbon\CarbonImmutable;
+use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
@@ -219,6 +222,33 @@ it('stores every event of a traced request, a sync job and a command in the raw 
         ->and($this->daemon->outbox()->spool()->isEmpty())->toBeTrue();
 });
 
+it('stores a traced Artisan command run in command_runs with its redacted arguments', function (): void {
+    // Laravel only re-routes Symfony's command events to CommandStarting / CommandFinished outside
+    // unit tests, so turn it on and rebuild Artisan with the dispatcher.
+    $kernel = app(Kernel::class);
+    $kernel->rerouteSymfonyCommandEvents();
+    $kernel->setArtisan(null);
+    $kernel->registerCommand(new ReportCommand);
+    app(TraceContext::class)->end();
+
+    Artisan::call('fixture:report', ['email' => 'jane@example.com', '--exit' => 3]);
+    $trace_id = app(TraceContext::class)->traceId();
+    app(TraceContext::class)->end();
+    drainDaemon($this->daemon, $this->batcher);
+
+    $run = DB::connection('app_watch')->table('command_runs')->sole();
+
+    expect($run->environment_id)->toBe(42)
+        ->and($run->trace_id)->toBe($trace_id)
+        ->and($run->command)->toBe('fixture:report')
+        ->and(json_decode((string) $run->arguments, true))->toEqual(['email' => '?', 'exit' => '?'])
+        ->and($run->exit_code)->toBe(3)
+        ->and($run->failed)->toBeTrue()
+        ->and($run->duration_ms)->toBeGreaterThan(0.0)
+        ->and((string) $run->arguments)->not->toContain('jane@example.com')
+        ->and(TelemetryRows::partitionOf('command_runs', (int) $run->id))->toBe('command_runs_p'.CarbonImmutable::now('UTC')->format('Ymd'));
+});
+
 it('counts a second identical exception in the same exception group', function (): void {
     checkout();
     $first = DB::connection('app_watch')->table('exception_groups')->first();
@@ -254,6 +284,7 @@ it('routes events recorded at 23:59:59 UTC into that day\'s partitions', functio
         new CacheEventPayload($metadata, 'array', 'cart:missing', CacheOperationEnum::Miss, null),
         new LogEventPayload($metadata, LogLevelEnum::Warning, 'Checkout is slow', null),
         new ExceptionEventPayload($metadata, CheckoutFailedException::class, 'Card declined', '/app/Checkout.php', 10, [], false),
+        new CommandEventPayload($metadata, 'orders:sync', [], 0, 15.0),
     ]);
     drainDaemon($this->daemon, $this->batcher);
 

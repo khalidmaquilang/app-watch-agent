@@ -5,6 +5,7 @@ declare(strict_types=1);
 use AppWatch\Agent\Maintenance\CreatePartitions;
 use AppWatch\Agent\Storage\BatchWriter;
 use AppWatch\Agent\Storage\CacheEventWriter;
+use AppWatch\Agent\Storage\CommandEventWriter;
 use AppWatch\Agent\Storage\EventValidator;
 use AppWatch\Agent\Storage\ExceptionEventWriter;
 use AppWatch\Agent\Storage\FingerprintException;
@@ -64,16 +65,17 @@ it('stores every fixture event in its table in one transaction and returns match
     expect($stats)->toBeInstanceOf(WriteStats::class)
         ->and($stats->stored)->toBe([
             'request' => 1, 'query' => 1, 'job' => 1, 'outgoing_request' => 1, 'cache' => 1, 'log' => 1, 'exception' => 1,
+            'command' => 1,
         ])
-        ->and($stats->storedCount())->toBe(7)
+        ->and($stats->storedCount())->toBe(8)
         ->and($stats->skipped_retention)->toBe(0)
         ->and($stats->malformed)->toBe(0)
         ->and(telemetryRowCounts())->toBe([
             'requests' => 1, 'queries' => 1, 'job_runs' => 1, 'outgoing_requests' => 1, 'cache_events' => 1, 'logs' => 1,
-            'exception_occurrences' => 1, 'exception_groups' => 1,
+            'exception_occurrences' => 1, 'command_runs' => 1, 'exception_groups' => 1,
         ])
         ->and($transactions)->toBe(1)
-        ->and($insert_levels)->toHaveCount(8)
+        ->and($insert_levels)->toHaveCount(9)
         ->and(array_unique($insert_levels))->toBe([1]);
 
     foreach (array_keys(telemetryRowCounts()) as $table) {
@@ -158,29 +160,40 @@ it('counts malformed events and stores the rest of the batch', function (): void
         ->and($stats->stored['cache'])->toBe(1)
         ->and(telemetryRowCounts())->toBe([
             'requests' => 1, 'queries' => 0, 'job_runs' => 0, 'outgoing_requests' => 0, 'cache_events' => 1, 'logs' => 0,
-            'exception_occurrences' => 0, 'exception_groups' => 0,
+            'exception_occurrences' => 0, 'command_runs' => 0, 'exception_groups' => 0,
         ]);
 });
 
-it('drops and counts a command event, which has no writer yet, without failing the batch', function (): void {
-    $command_event = [
-        ...array_intersect_key(fixtureEvent('job'), array_flip(['trace_id', 'recorded_at', 'host', 'deploy'])),
-        'type' => 'command',
-        'command' => 'orders:sync',
-        'arguments' => ['email' => '?'],
-        'exit_code' => 0,
-        'duration_ms' => 12.5,
-        'failed' => false,
-    ];
+it('stores a command event in command_runs with its arguments as jsonb and its exit code and failed flag as sent', function (): void {
+    $stats = $this->writer->write([
+        storageEvent('command', ['arguments' => ['email' => '?'], 'exit_code' => 2, 'failed' => true]),
+    ]);
 
-    $stats = $this->writer->write([$command_event, storageEvent('request')]);
+    $row = DB::connection('app_watch')->table('command_runs')->sole();
+
+    expect($stats->stored['command'])->toBe(1)
+        ->and($stats->malformed)->toBe(0)
+        ->and($row->environment_id)->toBe(1)
+        ->and($row->command)->toBe('orders:sync')
+        ->and(DB::connection('app_watch')->scalar('SELECT jsonb_typeof(arguments) FROM command_runs'))->toBe('object')
+        ->and(json_decode((string) $row->arguments, true))->toBe(['email' => '?'])
+        ->and($row->exit_code)->toBe(2)
+        ->and($row->failed)->toBeTrue();
+});
+
+it('drops and counts a command event with an out-of-range exit code or nested arguments and stores the rest of the batch', function (array $command_overrides): void {
+    $stats = $this->writer->write([storageEvent('command', $command_overrides), storageEvent('request')]);
 
     expect($stats->malformed)->toBe(1)
-        ->and($stats->stored)->not->toHaveKey('command')
+        ->and($stats->stored['command'])->toBe(0)
         ->and($stats->stored['request'])->toBe(1)
-        ->and($stats->storedCount())->toBe(1)
+        ->and(DB::connection('app_watch')->table('command_runs')->count())->toBe(0)
         ->and(storedRequestPaths())->toHaveCount(1);
-});
+})->with([
+    'exit code 300' => [['exit_code' => 300]],
+    'arguments nested two levels deep' => [['arguments' => ['email' => ['nested' => '?']]]],
+    'arguments with 101 keys' => [['arguments' => array_fill_keys(array_map(fn (int $index): string => "option{$index}", range(1, EventValidator::MAX_ARGUMENTS + 1)), '?')]],
+]);
 
 it('opens no transaction and runs no query when nothing is storable', function (): void {
     $queries = 0;
@@ -269,6 +282,7 @@ it('registers the storage classes as singletons', function (string $class): void
     JobEventWriter::class,
     OutgoingRequestEventWriter::class,
     CacheEventWriter::class,
+    CommandEventWriter::class,
     LogEventWriter::class,
     ExceptionEventWriter::class,
     FingerprintException::class,

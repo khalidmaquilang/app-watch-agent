@@ -33,6 +33,11 @@ final class EventValidator
     public const int MAX_CONTEXT_BYTES = 65536;
 
     /**
+     * The most keys (argument and option names) accepted in a command's `arguments`.
+     */
+    public const int MAX_ARGUMENTS = 100;
+
+    /**
      * The fields every event carries: [kind, nullable, max length or range]. Kinds: string, int,
      * number (int or float, stored as float), bool.
      *
@@ -44,8 +49,8 @@ final class EventValidator
     ];
 
     /**
-     * The type-specific fields per event type, in contract order. Enum, uuid, sha1, path, context
-     * and trace fields are checked separately.
+     * The type-specific fields per event type, in contract order. Enum, uuid, sha1, path, context,
+     * trace and arguments fields are checked separately.
      *
      * @var array<string, array<string, array{0: string, 1: bool, 2?: int|array{0: int, 1: int}}>>
      */
@@ -99,6 +104,13 @@ final class EventValidator
             'trace' => ['trace', false],
             'handled' => ['bool', false],
         ],
+        'command' => [
+            'command' => ['string', false, 255],
+            'arguments' => ['arguments', true],
+            'exit_code' => ['int', false, [0, 255]],
+            'duration_ms' => ['number', false],
+            'failed' => ['bool', false],
+        ],
     ];
 
     /**
@@ -130,7 +142,7 @@ final class EventValidator
 
         $type = $event['type'] ?? null;
 
-        // A type without contract fields (e.g. `command`, until its table and writer exist) is dropped as malformed.
+        // A type without contract fields is dropped as malformed.
         if (! is_string($type) || TelemetryTypeEnum::tryFrom($type) === null || ! array_key_exists($type, self::FIELDS)) {
             return null;
         }
@@ -225,6 +237,7 @@ final class EventValidator
             'log_level' => is_string($value) && LogLevelEnum::tryFrom($value) !== null ? $value : null,
             'context' => $this->context($value),
             'trace' => $this->trace($value),
+            'arguments' => $this->arguments($value),
             default => null,
         };
     }
@@ -243,6 +256,28 @@ final class EventValidator
         $encoded = json_encode($value, JSON_INVALID_UTF8_SUBSTITUTE);
 
         return $encoded !== false && strlen($encoded) <= self::MAX_CONTEXT_BYTES ? $value : null;
+    }
+
+    /**
+     * The command arguments when they are a flat JSON object: an array of at most MAX_ARGUMENTS string
+     * keys whose values are scalars or null (no nested arrays); null otherwise. An empty array is accepted.
+     *
+     * @return array<string, scalar|null>|null
+     */
+    private function arguments(mixed $value): ?array
+    {
+        if (! is_array($value) || count($value) > self::MAX_ARGUMENTS) {
+            return null;
+        }
+
+        foreach ($value as $name => $argument) {
+            if (! is_string($name) || ($argument !== null && ! is_scalar($argument))) {
+                return null;
+            }
+        }
+
+        /** @var array<string, scalar|null> $value */
+        return $value;
     }
 
     /**

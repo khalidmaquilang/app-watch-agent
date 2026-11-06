@@ -28,6 +28,7 @@ use AppWatch\Agent\Maintenance\PartitionedTables;
 use AppWatch\Agent\Maintenance\PruneRollups;
 use AppWatch\Agent\Storage\BatchWriter;
 use AppWatch\Agent\Storage\CacheEventWriter;
+use AppWatch\Agent\Storage\CommandEventWriter;
 use AppWatch\Agent\Storage\EventValidator;
 use AppWatch\Agent\Storage\ExceptionEventWriter;
 use AppWatch\Agent\Storage\FingerprintException;
@@ -114,6 +115,7 @@ class AppWatchAgentServiceProvider extends ServiceProvider
         $this->app->singleton(JobEventWriter::class);
         $this->app->singleton(OutgoingRequestEventWriter::class);
         $this->app->singleton(CacheEventWriter::class);
+        $this->app->singleton(CommandEventWriter::class);
         $this->app->singleton(LogEventWriter::class);
         $this->app->singleton(ExceptionEventWriter::class);
         $this->app->singleton(BatchWriter::class);

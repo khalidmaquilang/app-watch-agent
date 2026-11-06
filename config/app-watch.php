@@ -105,6 +105,7 @@ return [
         'cache_events',
         'logs',
         'exception_occurrences',
+        'command_runs',
     ],
 
     /*

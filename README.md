@@ -168,7 +168,7 @@ Delivery behaviour:
 php artisan app-watch:partitions [--database=app_watch]
 ```
 
-Run it daily. It drops the raw telemetry partitions (`{table}_pYYYYMMDD`, UTC days) older than `APP_WATCH_RETENTION_DAYS` (default 14, must be at least 1), then creates today … today + `APP_WATCH_PARTITIONS_AHEAD_DAYS` (default 7), and prints `Created N partition(s), dropped M partition(s).` A second run the same day changes nothing. Only children of the tables in `app-watch.tables` (a fixed whitelist) are ever touched. Every partition is created or dropped by its own statement without a wrapping transaction, so the connection must not go through a transaction-mode pooler (see [Connection poolers](#connection-poolers)).
+Run it daily. It drops the raw telemetry partitions (`{table}_pYYYYMMDD`, UTC days) older than `APP_WATCH_RETENTION_DAYS` (default 14, must be at least 1), then creates today … today + `APP_WATCH_PARTITIONS_AHEAD_DAYS` (default 7), and prints `Created N partition(s), dropped M partition(s).` A second run the same day changes nothing. Only children of the tables in `app-watch.tables` (a fixed whitelist: `requests`, `queries`, `job_runs`, `outgoing_requests`, `cache_events`, `logs`, `exception_occurrences`, `command_runs`) are ever touched. Every partition is created or dropped by its own statement without a wrapping transaction, so the connection must not go through a transaction-mode pooler (see [Connection poolers](#connection-poolers)).
 
 ## Rollup upkeep
 
@@ -239,16 +239,18 @@ The agent writes `recorded_at` as UTC `timestamptz` values, partitions are UTC d
 
 No code changes are needed. Each request, queued job run and console command is one trace; its events are flushed to the daemon when it ends.
 
-| Type              | Source                                                                               |
-| ----------------- | ------------------------------------------------------------------------------------ |
-| Requests          | `RequestHandled`                                                                     |
-| Queries           | `QueryExecuted` (SQL normalized)                                                     |
-| Jobs              | `JobProcessing` / `JobProcessed` / `JobFailed` / releases                            |
-| Commands          | `CommandStarting` / `CommandFinished`: name, exit code, duration, redacted arguments |
-| Outgoing requests | HTTP client `RequestSending` / `ResponseReceived` / failures                         |
-| Cache             | Hits, misses, writes, forgets                                                        |
-| Logs              | `MessageLogged` at or above `APP_WATCH_LOG_LEVEL`                                    |
-| Exceptions        | The exception handler's reportable callbacks                                         |
+| Type              | Source                                                                               | Table                                                   |
+| ----------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------- |
+| Requests          | `RequestHandled`                                                                     | `requests`                                              |
+| Queries           | `QueryExecuted` (SQL normalized)                                                     | `queries`                                               |
+| Jobs              | `JobProcessing` / `JobProcessed` / `JobFailed` / releases                            | `job_runs`                                              |
+| Commands          | `CommandStarting` / `CommandFinished`: name, exit code, duration, redacted arguments | `command_runs`                                          |
+| Outgoing requests | HTTP client `RequestSending` / `ResponseReceived` / failures                         | `outgoing_requests`                                     |
+| Cache             | Hits, misses, writes, forgets                                                        | `cache_events`                                          |
+| Logs              | `MessageLogged` at or above `APP_WATCH_LOG_LEVEL`                                    | `logs`                                                  |
+| Exceptions        | The exception handler's reportable callbacks                                         | `exception_occurrences` (grouped in `exception_groups`) |
+
+Every table except `exception_groups` is partitioned per UTC day and expires through [partition upkeep](#partition-upkeep). Requests, queries, jobs, commands, outgoing requests and cache events are also rolled up per minute and hour (commands per command name, failed runs counted as errors).
 
 Command arguments and options keep their names only: every value is stored as `?` (a set flag as `true`), so passwords, tokens or emails passed on the command line are never recorded. A command called from inside another command (`Artisan::call()`) is recorded as its own command event on the outer command's trace. Commands matching `ignore.commands` (by default `app-watch:*`, `queue:work`, `queue:listen`, `schedule:*`, `horizon*`, `octane:*`) get no trace and no record.
 

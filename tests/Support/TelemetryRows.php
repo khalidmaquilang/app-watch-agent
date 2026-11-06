@@ -28,6 +28,7 @@ final class TelemetryRows
             'outgoing_requests' => ['method' => 'GET', 'target_host' => 'api.stripe.com', 'url' => 'https://api.stripe.com/v1', 'status_code' => 200, 'failed' => false, 'duration_ms' => 20.0],
             'cache_events' => ['store' => 'redis', 'key' => 'users:1', 'operation' => 'hit', 'duration_ms' => null],
             'logs' => ['level' => 'error', 'message' => 'Something happened', 'context' => null],
+            'command_runs' => ['command' => 'orders:sync', 'arguments' => null, 'exit_code' => 0, 'failed' => false, 'duration_ms' => 100.0],
             default => [],
         };
 
@@ -71,6 +72,16 @@ final class TelemetryRows
     public static function request(DateTimeInterface $recorded_at, array $overrides = []): void
     {
         self::raw('requests', ['recorded_at' => $recorded_at, ...$overrides]);
+    }
+
+    /**
+     * Insert one command run row recorded at the given time.
+     *
+     * @param  array<string, mixed>  $overrides
+     */
+    public static function commandRun(DateTimeInterface $recorded_at, array $overrides = []): void
+    {
+        self::raw('command_runs', ['recorded_at' => $recorded_at, ...$overrides]);
     }
 
     /**

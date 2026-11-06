@@ -56,8 +56,10 @@ it('uses the per-type key and error rules', function (): void {
     TelemetryRows::raw('cache_events', ['recorded_at' => $recorded_at, 'key' => 'users:1', 'operation' => 'miss', 'duration_ms' => 3.0]);
     TelemetryRows::raw('cache_events', ['recorded_at' => $recorded_at, 'key' => 'users:2', 'operation' => 'hit', 'duration_ms' => 1.0]);
     TelemetryRows::raw('cache_events', ['recorded_at' => $recorded_at, 'key' => 'settings', 'operation' => 'hit']);
+    TelemetryRows::commandRun($recorded_at, ['command' => 'orders:sync', 'exit_code' => 1, 'failed' => true]);
+    TelemetryRows::commandRun($recorded_at, ['command' => 'orders:sync']);
 
-    expect($this->builder->handle('rollups_minute', $this->from, $this->to, 'minute'))->toBe(6);
+    expect($this->builder->handle('rollups_minute', $this->from, $this->to, 'minute'))->toBe(7);
 
     $rows = collect(TelemetryRows::rollups('rollups_minute'))
         ->mapWithKeys(fn (array $rollup): array => ["{$rollup['type']}|{$rollup['key']}" => [$rollup['count'], $rollup['error_count']]])
@@ -70,6 +72,7 @@ it('uses the per-type key and error rules', function (): void {
         'outgoing_request|api.stripe.com' => [1, 1],
         'cache|users' => [2, 1],
         'cache|settings' => [1, 0],
+        'command|orders:sync' => [2, 1],
     ]);
 });
 

@@ -62,6 +62,21 @@ it('indexes exception occurrences by group and time', function (): void {
     expect(telemetryIndexColumns('exception_occurrences'))->toContain('exception_group_id,recorded_at');
 });
 
+it('has the command run columns', function (): void {
+    $columns = collect(Schema::connection('pgsql')->getColumns('command_runs'))->keyBy('name');
+
+    expect($columns['command']['type'])->toBe('character varying(255)')
+        ->and($columns['command']['nullable'])->toBeFalse()
+        ->and($columns['arguments']['type'])->toBe('jsonb')
+        ->and($columns['arguments']['nullable'])->toBeTrue()
+        ->and($columns['exit_code']['type'])->toBe('smallint')
+        ->and($columns['exit_code']['nullable'])->toBeFalse()
+        ->and($columns['failed']['type'])->toBe('boolean')
+        ->and($columns['failed']['nullable'])->toBeFalse()
+        ->and($columns['duration_ms']['type'])->toBe('double precision')
+        ->and($columns['duration_ms']['nullable'])->toBeFalse();
+});
+
 it('has no foreign key constraints on the exception group and rollup tables', function (string $table): void {
     $foreign_key_count = DB::connection('pgsql')->scalar(
         "SELECT count(*) FROM pg_constraint WHERE conrelid = ?::regclass AND contype = 'f'",
@@ -97,7 +112,7 @@ it('keeps the rollup indexes', function (string $table): void {
 it('records the schema version with its install time', function (): void {
     $row = DB::connection('pgsql')->table(TelemetrySchema::VERSIONS_TABLE)->sole();
 
-    expect(TelemetrySchema::CURRENT_VERSION)->toBe(2)
+    expect(TelemetrySchema::CURRENT_VERSION)->toBe(3)
         ->and($row->version)->toBe(TelemetrySchema::CURRENT_VERSION)
         ->and($row->installed_at)->not->toBeNull()
         ->and(collect(Schema::connection('pgsql')->getIndexes(TelemetrySchema::VERSIONS_TABLE))->firstWhere('primary', true)['columns'] ?? null)->toBe(['version']);

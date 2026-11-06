@@ -40,7 +40,7 @@ it('creates the telemetry tables, the schema version and the migrations table', 
     }
 
     expect(DB::connection('pgsql')->table('app_watch_schema_versions')->pluck('version')->all())->toBe([TelemetrySchema::CURRENT_VERSION])
-        ->and(TelemetrySchema::CURRENT_VERSION)->toBe(2)
+        ->and(TelemetrySchema::CURRENT_VERSION)->toBe(3)
         ->and($schema->hasColumn('exception_groups', 'resolved_at'))->toBeFalse()
         ->and(DB::connection('pgsql')->table('migrations')->count())->toBe(5);
 });
@@ -50,7 +50,8 @@ it('creates the daily partitions for today through today + partitions_ahead_days
 
     $today = CarbonImmutable::now('UTC');
 
-    expect(installedPartitionCount())->toBe(8 * 7);
+    expect(TelemetrySchema::PARTITIONED_TABLES)->toContain('command_runs')
+        ->and(installedPartitionCount())->toBe(8 * 8);
 
     foreach (TelemetrySchema::PARTITIONED_TABLES as $table) {
         expect(Schema::connection('pgsql')->hasTable("{$table}_p{$today->format('Ymd')}"))->toBeTrue()
@@ -64,7 +65,7 @@ it('uses the configured partitions_ahead_days', function (): void {
 
     $this->artisan('app-watch:install', ['--database' => 'pgsql'])->assertExitCode(0);
 
-    expect(installedPartitionCount())->toBe(3 * 7);
+    expect(installedPartitionCount())->toBe(3 * 8);
 });
 
 it('migrates nothing and creates no partitions when run again', function (): void {
@@ -91,7 +92,7 @@ it('skips a partition that already exists', function (): void {
         ->assertExitCode(0);
 
     expect(Schema::connection('pgsql')->hasTable($partition))->toBeTrue()
-        ->and(installedPartitionCount())->toBe(8 * 7);
+        ->and(installedPartitionCount())->toBe(8 * 8);
 });
 
 it('installs on the --database connection, not the default one', function (): void {

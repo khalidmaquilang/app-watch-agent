@@ -17,7 +17,7 @@ it('accepts every fixture event and returns exactly its contract fields', functi
     expect($validated)->not->toBeNull()
         ->and(array_keys($validated))->toBe(array_keys($event))
         ->and($validated)->toEqual($event);
-})->with(['request', 'query', 'job', 'outgoing_request', 'cache', 'log', 'exception']);
+})->with(['request', 'query', 'job', 'outgoing_request', 'cache', 'log', 'exception', 'command']);
 
 it('drops unknown keys such as an environment_id from the event', function (): void {
     expect($this->validator->validate(storageEvent('request', ['environment_id' => 99, 'extra' => true])))
@@ -41,6 +41,8 @@ it('accepts optional fields as null or missing and returns them as null', functi
     'outgoing request' => ['outgoing_request', ['status_code' => null], []],
     'cache' => ['cache', ['duration_ms' => null], []],
     'log' => ['log', [], ['context']],
+    'command' => ['command', ['arguments' => null], []],
+    'command without arguments' => ['command', [], ['arguments']],
 ]);
 
 it('casts integer durations to float', function (): void {
@@ -60,6 +62,17 @@ it('accepts recorded_at far in the past or future and in another offset', functi
     'future' => '2099-12-31T23:59:59.999999+08:00',
 ]);
 
+it('accepts command limits at their boundaries', function (): void {
+    $arguments = array_fill_keys(array_map(fn (int $index): string => "option{$index}", range(1, EventValidator::MAX_ARGUMENTS)), '?');
+
+    expect($this->validator->validate(storageEvent('command', ['arguments' => $arguments]))['arguments'] ?? null)->toBe($arguments)
+        ->and($this->validator->validate(storageEvent('command', ['exit_code' => 255, 'failed' => true])))->not->toBeNull()
+        ->and($this->validator->validate(storageEvent('command', ['exit_code' => 0])))->not->toBeNull()
+        ->and($this->validator->validate(storageEvent('command', ['command' => str_repeat('c', 255)])))->not->toBeNull()
+        ->and($this->validator->validate(storageEvent('command', ['arguments' => []]))['arguments'] ?? null)->toBe([])
+        ->and($this->validator->validate(storageEvent('command', ['arguments' => ['a' => 1, 'b' => 1.5, 'c' => true, 'd' => null]])))->not->toBeNull();
+});
+
 it('accepts a log context of exactly 64 KB serialized', function (): void {
     $overhead = strlen((string) json_encode(['blob' => '']));
 
@@ -71,7 +84,7 @@ it('rejects an event that breaks the contract', function (mixed $event): void {
 })->with([
     'not an array' => fn (): string => 'foo',
     'unknown type' => fn (): array => storageEvent('job', ['type' => 'span']),
-    'command type without contract fields yet' => fn (): array => storageEvent('job', ['type' => 'command']),
+    'command type with the fields of another type' => fn (): array => storageEvent('job', ['type' => 'command']),
     'missing type' => fn (): array => Arr::except(fixtureEvent('query'), 'type'),
     'a type that is not a scalar' => fn (): array => storageEvent('request', ['type' => ['request']]),
     'an integer type' => fn (): array => storageEvent('request', ['type' => 1]),
@@ -111,6 +124,19 @@ it('rejects an event that breaks the contract', function (mixed $event): void {
     'exception frame without function' => fn (): array => storageEvent('exception', ['trace' => [Arr::except(fixtureEvent('exception')['trace'][0], 'function')]]),
     'exception line as a string' => fn (): array => storageEvent('exception', ['line' => '88']),
     'missing exception handled flag' => fn (): array => Arr::except(fixtureEvent('exception'), 'handled'),
+    'command over 255 characters' => fn (): array => storageEvent('command', ['command' => str_repeat('c', 256)]),
+    'missing command' => fn (): array => Arr::except(fixtureEvent('command'), 'command'),
+    'command exit_code 300' => fn (): array => storageEvent('command', ['exit_code' => 300]),
+    'command exit_code -1' => fn (): array => storageEvent('command', ['exit_code' => -1]),
+    'command exit_code as a string' => fn (): array => storageEvent('command', ['exit_code' => '0']),
+    'missing command failed flag' => fn (): array => Arr::except(fixtureEvent('command'), 'failed'),
+    'command failed flag as an integer' => fn (): array => storageEvent('command', ['failed' => 1]),
+    'missing command duration_ms' => fn (): array => Arr::except(fixtureEvent('command'), 'duration_ms'),
+    'command arguments that are not an array' => fn (): array => storageEvent('command', ['arguments' => 'email=?']),
+    'command arguments that are a list' => fn (): array => storageEvent('command', ['arguments' => ['?']]),
+    'command arguments nested two levels deep' => fn (): array => storageEvent('command', ['arguments' => ['email' => ['nested' => '?']]]),
+    'command arguments with an empty array value' => fn (): array => storageEvent('command', ['arguments' => ['email' => []]]),
+    'command arguments with 101 keys' => fn (): array => storageEvent('command', ['arguments' => array_fill_keys(array_map(fn (int $index): string => "option{$index}", range(1, EventValidator::MAX_ARGUMENTS + 1)), '?')]),
     'fields of another type' => fn (): array => storageEvent('request', ['type' => 'query']),
 ]);
 

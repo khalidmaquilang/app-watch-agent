@@ -72,6 +72,12 @@ final class BuildRollupsForRange
             'error' => "operation = 'miss'",
             'duration' => null,
         ],
+        'command' => [
+            'raw_table' => 'command_runs',
+            'key' => 'command',
+            'error' => 'failed',
+            'duration' => 'duration_ms',
+        ],
     ];
 
     /**

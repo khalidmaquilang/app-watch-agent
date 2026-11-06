@@ -77,6 +77,13 @@ return new class extends Migration
             trace jsonb NOT NULL,
             handled boolean NOT NULL
             SQL,
+        'command_runs' => <<<'SQL'
+            command varchar(255) NOT NULL,
+            arguments jsonb NULL,
+            exit_code smallint NOT NULL,
+            failed boolean NOT NULL,
+            duration_ms double precision NOT NULL
+            SQL,
     ];
 
     /**

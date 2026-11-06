@@ -15,7 +15,7 @@ final class Schema
      * @var list<string>
      */
     public const array PARTITIONED_TABLES = [
-        'requests', 'queries', 'job_runs', 'outgoing_requests', 'cache_events', 'logs', 'exception_occurrences',
+        'requests', 'queries', 'job_runs', 'outgoing_requests', 'cache_events', 'logs', 'exception_occurrences', 'command_runs',
     ];
 
     /**
@@ -31,8 +31,9 @@ final class Schema
      *
      * - 1: initial schema.
      * - 2: `exception_groups.resolved_at` removed; issue status lives in App Watch's central `issues` table.
+     * - 3: `command_runs` added (Artisan command runs).
      */
-    public const int CURRENT_VERSION = 2;
+    public const int CURRENT_VERSION = 3;
 
     /**
      * The default number of days ahead of today the daily partitions are created for.

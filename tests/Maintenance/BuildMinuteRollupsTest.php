@@ -58,6 +58,32 @@ it('rolls up the last closed minute with Postgres percentiles', function (): voi
         ->and((float) $rows[0]['max'])->toEqualWithDelta(100, 0.01);
 });
 
+it('rolls up command runs per command with failures as errors, idempotently', function (): void {
+    foreach ([100, 200, 300] as $index => $duration) {
+        TelemetryRows::commandRun($this->minute->addSeconds($index + 1), ['command' => 'a:b', 'duration_ms' => $duration, 'failed' => $duration === 200, 'exit_code' => $duration === 200 ? 1 : 0]);
+    }
+
+    $now = CarbonImmutable::parse('2026-11-03 12:01:00', 'UTC');
+
+    expect($this->builder->handle($now))->toBe(1);
+
+    $rows = TelemetryRows::rollups('rollups_minute');
+
+    expect($rows)->toHaveCount(1)
+        ->and($rows[0]['type'])->toBe('command')
+        ->and($rows[0]['key'])->toBe('a:b')
+        ->and($rows[0]['bucket'])->toBe('2026-11-03T12:00:00+00:00')
+        ->and($rows[0]['count'])->toBe(3)
+        ->and($rows[0]['error_count'])->toBe(1)
+        ->and((float) $rows[0]['duration_sum'])->toEqualWithDelta(600, 0.01)
+        ->and((float) $rows[0]['p95'])->toEqualWithDelta(290, 0.01)
+        ->and((float) $rows[0]['max'])->toEqualWithDelta(300, 0.01);
+
+    $this->builder->handle($now);
+
+    expect(TelemetryRows::rollups('rollups_minute'))->toEqual($rows);
+});
+
 it('never rolls up the current open minute', function (): void {
     TelemetryRows::request(CarbonImmutable::parse('2026-11-03 12:01:00', 'UTC'));
     TelemetryRows::request(CarbonImmutable::parse('2026-11-03 12:01:29', 'UTC'));

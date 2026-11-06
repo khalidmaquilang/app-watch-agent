@@ -20,7 +20,7 @@ afterEach(function (): void {
 it('creates one partition per table and UTC day in [now, now + ahead_days] with UTC midnight bounds', function (): void {
     $created = $this->create_partitions->handle(CarbonImmutable::parse('2025-03-01 15:00:00', 'UTC'), 2);
 
-    expect($created)->toBe(21);
+    expect($created)->toBe(24);
 
     foreach (Schema::PARTITIONED_TABLES as $table) {
         expect(telemetryPartitionsOf($table))->toBe(["{$table}_p20250301", "{$table}_p20250302", "{$table}_p20250303"]);
@@ -33,7 +33,7 @@ it('creates one partition per table and UTC day in [now, now + ahead_days] with 
 it('is idempotent: a second run creates nothing', function (): void {
     $now = CarbonImmutable::parse('2025-03-01', 'UTC');
 
-    expect($this->create_partitions->handle($now, 3))->toBe(28)
+    expect($this->create_partitions->handle($now, 3))->toBe(32)
         ->and($this->create_partitions->handle($now, 3))->toBe(0)
         ->and(telemetryPartitionsOf('logs'))->toContain('logs_p20250304');
 });
@@ -41,11 +41,11 @@ it('is idempotent: a second run creates nothing', function (): void {
 it('only counts the partitions it actually creates', function (): void {
     $this->create_partitions->handle(CarbonImmutable::parse('2025-03-02', 'UTC'), 0);
 
-    expect($this->create_partitions->handle(CarbonImmutable::parse('2025-03-01', 'UTC'), 2))->toBe(14);
+    expect($this->create_partitions->handle(CarbonImmutable::parse('2025-03-01', 'UTC'), 2))->toBe(16);
 });
 
 it('creates a single day when ahead_days is 0', function (): void {
-    expect($this->create_partitions->handle(CarbonImmutable::parse('2025-03-01', 'UTC'), 0))->toBe(7);
+    expect($this->create_partitions->handle(CarbonImmutable::parse('2025-03-01', 'UTC'), 0))->toBe(8);
 });
 
 it('only creates partitions of the configured tables', function (): void {
@@ -76,7 +76,7 @@ it('creates the partitions on the given connection', function (): void {
     config(['database.connections.client' => config('database.connections.app_watch')]);
     config(['app-watch.connection' => 'missing_connection']);
 
-    expect($this->create_partitions->handle(CarbonImmutable::parse('2025-03-01', 'UTC'), 0, 'client'))->toBe(7)
+    expect($this->create_partitions->handle(CarbonImmutable::parse('2025-03-01', 'UTC'), 0, 'client'))->toBe(8)
         ->and(telemetryPartitionsOf('requests'))->toBe(['requests_p20250301']);
 });
 

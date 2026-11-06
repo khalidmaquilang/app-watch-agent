@@ -30,10 +30,10 @@ function telemetryPartitionCount(): int
 
 it('creates today … today + 7 for every table on an empty database, then nothing on a second run', function (): void {
     $this->artisan('app-watch:partitions')
-        ->expectsOutputToContain('Created 56 partition(s), dropped 0 partition(s).')
+        ->expectsOutputToContain('Created 64 partition(s), dropped 0 partition(s).')
         ->assertExitCode(0);
 
-    expect(telemetryPartitionCount())->toBe(56);
+    expect(telemetryPartitionCount())->toBe(64);
 
     foreach (Schema::PARTITIONED_TABLES as $table) {
         expect(telemetryPartitionsOf($table))->toBe(
@@ -45,7 +45,7 @@ it('creates today … today + 7 for every table on an empty database, then nothi
         ->expectsOutputToContain('Created 0 partition(s), dropped 0 partition(s).')
         ->assertExitCode(0);
 
-    expect(telemetryPartitionCount())->toBe(56);
+    expect(telemetryPartitionCount())->toBe(64);
 });
 
 it('drops exactly the partitions older than retention_days', function (): void {
@@ -62,7 +62,7 @@ it('drops exactly the partitions older than retention_days', function (): void {
 
     expect(telemetryPartitionsOf('requests'))->not->toContain($expired[0])
         ->and(telemetryPartitionsOf('logs'))->not->toContain($expired[1])
-        ->and(telemetryPartitionCount())->toBe(56);
+        ->and(telemetryPartitionCount())->toBe(64);
 });
 
 it('never drops a non-whitelisted table that matches the partition name pattern', function (): void {
@@ -105,7 +105,7 @@ it('creates the same UTC partitions whatever the host timezone', function (strin
     date_default_timezone_set($timezone);
 
     $this->artisan('app-watch:partitions')
-        ->expectsOutputToContain('Created 56 partition(s), dropped 0 partition(s).')
+        ->expectsOutputToContain('Created 64 partition(s), dropped 0 partition(s).')
         ->assertExitCode(0);
 
     expect(telemetryPartitionsOf('requests'))->toBe([
@@ -119,7 +119,7 @@ it('uses the configured partitions_ahead_days', function (): void {
     config(['app-watch.partitions_ahead_days' => 2]);
 
     $this->artisan('app-watch:partitions')
-        ->expectsOutputToContain('Created 21 partition(s), dropped 0 partition(s).')
+        ->expectsOutputToContain('Created 24 partition(s), dropped 0 partition(s).')
         ->assertExitCode(0);
 });
 
@@ -130,7 +130,7 @@ it('runs on the --database connection', function (): void {
     ]);
 
     $this->artisan('app-watch:partitions', ['--database' => 'client'])
-        ->expectsOutputToContain('Created 56 partition(s), dropped 0 partition(s).')
+        ->expectsOutputToContain('Created 64 partition(s), dropped 0 partition(s).')
         ->assertExitCode(0);
 });
 
@@ -149,7 +149,7 @@ it('records none of its own queries, exceptions or logs', function (): void {
     $this->artisan('app-watch:partitions')->assertExitCode(0);
 
     expect($trace_context->traceId())->toBeNull()
-        ->and(telemetryPartitionCount())->toBe(56);
+        ->and(telemetryPartitionCount())->toBe(64);
 
     $trace_id = (string) $trace_context->start();
 
